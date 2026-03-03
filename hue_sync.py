@@ -60,7 +60,7 @@ def ws_handler(ws):
         with _colors_lock:
             ws.send(json.dumps(_latest_colors, separators=(",", ":")))
         while True:
-            ws.receive(timeout=60)
+            ws.receive(timeout=None)
     except Exception:
         pass
     finally:
@@ -165,6 +165,28 @@ def fetch_initial_colors(bridge_ip, api_key, light_ids):
             colors.append({"r": 0, "g": 0, "b": 0})
 
     return colors if colors else [{"r": 0, "g": 0, "b": 0}]
+
+
+def fetch_current_colors(bridge_ip, api_key, light_id):
+    """Fetch the current color of a single light; used when a toggle-on event carries no color."""
+    headers = {"hue-application-key": api_key}
+    url = f"https://{bridge_ip}/clip/v2/resource/light/{light_id}"
+    resp = requests.get(url, headers=headers, verify=False, timeout=5)
+    resp.raise_for_status()
+    data = resp.json().get("data", [{}])[0]
+    bri = data.get("dimming", {}).get("brightness", 100.0) / 100.0
+    if "gradient" in data and data["gradient"].get("points"):
+        colors = []
+        for point in data["gradient"]["points"]:
+            xy = point["color"]["xy"]
+            r, g, b = xy_bri_to_rgb(xy["x"], xy["y"], bri)
+            colors.append({"r": r, "g": g, "b": b})
+        return colors
+    elif "color" in data and "xy" in data["color"]:
+        xy = data["color"]["xy"]
+        r, g, b = xy_bri_to_rgb(xy["x"], xy["y"], bri)
+        return [{"r": r, "g": g, "b": b}]
+    return [{"r": 0, "g": 0, "b": 0}]
 
 
 def fetch_current_colors(bridge_ip, api_key, light_id):
@@ -403,7 +425,8 @@ def extract_colors_from_event(data, watched_ids):
         for item in event.get("data", []):
             if item.get("type") != "light":
                 continue
-            if item.get("id") not in watched_ids:
+            light_id = item.get("id")
+            if light_id not in watched_ids:
                 continue
 
             on_state = item.get("on", {})
@@ -415,23 +438,36 @@ def extract_colors_from_event(data, watched_ids):
 
             bri = item.get("dimming", {}).get("brightness", 100.0) / 100.0
 
+            has_color = False
             if "gradient" in item and item["gradient"].get("points"):
+                has_color = True
                 for point in item["gradient"]["points"]:
                     xy = point["color"]["xy"]
                     r, g, b = xy_bri_to_rgb(xy["x"], xy["y"], bri)
                     colors.append({"r": r, "g": g, "b": b})
             elif "color" in item and "xy" in item["color"]:
+                has_color = True
                 xy = item["color"]["xy"]
                 r, g, b = xy_bri_to_rgb(xy["x"], xy["y"], bri)
                 colors.append({"r": r, "g": g, "b": b})
-            elif "on" in on_state and on_state["on"]:
-                # Light toggled on but no color in event — fetch current state from bridge
-                print(
-                    f"  [hue] Toggle-on with no color data, fetching state for {item['id']} ..."
-                )
-                colors.extend(
-                    fetch_current_colors(BRIDGE_IP, APPLICATION_KEY, item["id"])
-                )
+
+            if not has_color:
+                if "on" in on_state and on_state["on"]:
+                    # Toggle-on with no color — fetch from bridge
+                    print(
+                        f"  [hue] Toggle-on with no color data, fetching state for {light_id} ..."
+                    )
+                    colors.extend(
+                        fetch_current_colors(BRIDGE_IP, APPLICATION_KEY, light_id)
+                    )
+                elif "dimming" in item:
+                    # Brightness-only event — fetch current colors from bridge at new brightness
+                    print(
+                        f"  [hue] Brightness change, fetching state for {light_id} ..."
+                    )
+                    colors.extend(
+                        fetch_current_colors(BRIDGE_IP, APPLICATION_KEY, light_id)
+                    )
 
     return colors
 
@@ -526,7 +562,7 @@ def main():
     print("Waiting for tunnel to be reachable ...")
     time.sleep(5)
 
-    reload_signalrgb_effect("Hue Sync")
+    # reload_signalrgb_effect("Hue Sync")
 
     hue_thread = threading.Thread(
         target=hue_stream_thread,
