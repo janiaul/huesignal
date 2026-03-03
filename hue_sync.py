@@ -3,7 +3,8 @@ import traceback
 import threading
 import time
 import subprocess
-import re
+import shutil
+import ssl
 import configparser
 
 import urllib3
@@ -36,6 +37,11 @@ BRIDGE_IP = _config["hue"]["bridge_ip"]
 APPLICATION_KEY = _config["hue"]["application_key"]
 ENTERTAINMENT_ZONE_NAME = _config["hue"]["entertainment_zone_name"]
 ENTERTAINMENT_ID = _config["hue"].get("entertainment_id", "")
+
+CERT_FILE = BASE_DIR / "localhost+1.pem"
+KEY_FILE = BASE_DIR / "localhost+1-key.pem"
+MKCERT_CAROOT = Path(subprocess.check_output(["mkcert", "-CAROOT"], text=True).strip())
+MKCERT_CA_CERT = MKCERT_CAROOT / "rootCA.pem"
 
 # ==========================================
 # FLASK / WEBSOCKET
@@ -237,60 +243,42 @@ def xy_bri_to_rgb(x, y, bri=1.0):
 
 
 # ==========================================
-# CLOUDFLARED
+# SIGNALRGB CACERT PATCHING
 # ==========================================
 
 
-def start_cloudflared(local_port: int, timeout: int = 60) -> str:
-    """Kill any existing cloudflared processes, start a fresh tunnel, and return the wss:// URL."""
-    subprocess.run(
-        ["taskkill", "/f", "/im", "cloudflared.exe"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    time.sleep(1)
-
-    url_pattern = re.compile(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com")
-    found_url = []
-
-    def read_stderr(pipe):
-        for line in pipe:
-            match = url_pattern.search(line)
-            if match and not found_url:
-                found_url.append(line.strip())
-
-    cmd = ["cloudflared", "tunnel", "--url", f"http://127.0.0.1:{local_port}"]
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
+def find_signalrgb_cacert() -> Path | None:
+    """Find cacert.pem by locating the running SignalRgb.exe process."""
+    result = subprocess.run(
+        ["wmic", "process", "where", "name='SignalRgb.exe'", "get", "ExecutablePath"],
+        capture_output=True,
         text=True,
-        encoding="utf-8",
-        errors="replace",
     )
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if line.lower().endswith("signalrgb.exe"):
+            return Path(line).parent / "cacert.pem"
+    return None
 
-    stderr_thread = threading.Thread(
-        target=read_stderr, args=(proc.stderr,), daemon=True
-    )
-    stderr_thread.start()
 
-    print("Starting cloudflared tunnel ...")
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if found_url:
-            match = url_pattern.search(found_url[0])
-            https_url = match.group(0)
-            wss_url = https_url.replace("https://", "wss://") + "/ws"
-            print(f"  -> Tunnel URL: {wss_url}")
-            return wss_url
-        if proc.poll() is not None:
-            raise RuntimeError(
-                f"cloudflared exited unexpectedly with code {proc.returncode}"
-            )
-        time.sleep(0.5)
+def ensure_ca_in_cacert(cacert_path: Path, ca_cert_path: Path) -> None:
+    """Append mkcert's CA to SignalRGB's cacert.pem if not already present; backs up first."""
+    ca_cert_text = ca_cert_path.read_text(encoding="utf-8")
+    cacert_text = cacert_path.read_text(encoding="utf-8")
 
-    proc.terminate()
-    raise RuntimeError("Timed out waiting for cloudflared tunnel URL")
+    if ca_cert_text.strip() in cacert_text:
+        print("  -> mkcert CA already in SignalRGB cacert.pem, skipping.")
+        return
+
+    bak_path = cacert_path.with_suffix(".pem.bak")
+    if not bak_path.exists():
+        shutil.copy2(cacert_path, bak_path)
+        print(f"  -> Backup created: {bak_path}")
+
+    with open(cacert_path, "a", encoding="utf-8") as f:
+        f.write("\n")
+        f.write(ca_cert_text)
+    print(f"  -> mkcert CA appended to {cacert_path}")
 
 
 # ==========================================
@@ -508,7 +496,7 @@ def hue_stream_thread(bridge_ip, api_key, watched_ids):
 
 
 def main():
-    """Resolve zone/lights, seed initial color state, start cloudflared and Flask."""
+    """Resolve zone/lights, patch SignalRGB cacert, seed initial color state, and start Flask over SSL."""
     global ENTERTAINMENT_ID, _latest_colors
 
     if not ENTERTAINMENT_ID:
@@ -531,13 +519,18 @@ def main():
     )
     print(f"  -> Initial colors: {rgb_preview}")
 
-    wss_url = start_cloudflared(FLASK_PORT)
+    print("Checking SignalRGB cacert.pem ...")
+    cacert_path = find_signalrgb_cacert()
+    if cacert_path and cacert_path.exists():
+        ensure_ca_in_cacert(cacert_path, MKCERT_CA_CERT)
+    else:
+        print(
+            "  -> SignalRGB not running or cacert.pem not found, skipping cacert patch."
+        )
 
+    wss_url = "wss://127.0.0.1:5123/ws"
     write_html(HUESYNC_HTML, wss_url)
     print(f"Effect file written: {HUESYNC_HTML}")
-
-    print("Waiting for tunnel to be reachable ...")
-    time.sleep(5)
 
     # reload_signalrgb_effect("Hue Sync")
 
@@ -548,7 +541,9 @@ def main():
     )
     hue_thread.start()
 
-    app.run(host="127.0.0.1", port=FLASK_PORT)
+    ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ssl_ctx.load_cert_chain(certfile=CERT_FILE, keyfile=KEY_FILE)
+    app.run(host="127.0.0.1", port=FLASK_PORT, ssl_context=ssl_ctx)
 
 
 if __name__ == "__main__":
