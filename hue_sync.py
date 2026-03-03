@@ -52,15 +52,15 @@ _colors_lock = threading.Lock()
 
 @sock.route("/ws")
 def ws_handler(ws):
+    """Accept a new WebSocket client, send the current color immediately, then keep alive."""
     with _clients_lock:
         _connected_clients.add(ws)
     print(f"  [ws] Client connected ({len(_connected_clients)} total)")
     try:
-        # Send current color immediately on connect
         with _colors_lock:
             ws.send(json.dumps(_latest_colors, separators=(",", ":")))
         while True:
-            ws.receive(timeout=60)  # keep alive; we only push, never pull
+            ws.receive(timeout=60)
     except Exception:
         pass
     finally:
@@ -70,6 +70,7 @@ def ws_handler(ws):
 
 
 def broadcast(msg: str) -> None:
+    """Send a message to all connected WebSocket clients, dropping any dead connections."""
     with _clients_lock:
         dead = set()
         for ws in _connected_clients:
@@ -86,6 +87,7 @@ def broadcast(msg: str) -> None:
 
 
 def resolve_zone_id(bridge_ip, api_key, zone_name):
+    """Find the entertainment zone ID matching the configured zone name."""
     url = f"https://{bridge_ip}/clip/v2/resource/entertainment_configuration"
     resp = requests.get(
         url, headers={"hue-application-key": api_key}, verify=False, timeout=5
@@ -99,6 +101,7 @@ def resolve_zone_id(bridge_ip, api_key, zone_name):
 
 
 def resolve_light_ids_in_zone(bridge_ip, api_key, zone_id):
+    """Walk the zone's channel/entertainment/device graph to collect all light resource IDs."""
     headers = {"hue-application-key": api_key}
     url = f"https://{bridge_ip}/clip/v2/resource/entertainment_configuration/{zone_id}"
     resp = requests.get(url, headers=headers, verify=False, timeout=5)
@@ -132,22 +135,80 @@ def resolve_light_ids_in_zone(bridge_ip, api_key, zone_id):
     return light_rids
 
 
+def fetch_initial_colors(bridge_ip, api_key, light_ids):
+    """Fetch current color state of each light at startup; returns black if all lights are off."""
+    headers = {"hue-application-key": api_key}
+    colors = []
+
+    for light_id in light_ids:
+        url = f"https://{bridge_ip}/clip/v2/resource/light/{light_id}"
+        resp = requests.get(url, headers=headers, verify=False, timeout=5)
+        resp.raise_for_status()
+        data = resp.json().get("data", [{}])[0]
+
+        if not data.get("on", {}).get("on", False):
+            colors.append({"r": 0, "g": 0, "b": 0})
+            continue
+
+        bri = data.get("dimming", {}).get("brightness", 100.0) / 100.0
+
+        if "gradient" in data and data["gradient"].get("points"):
+            for point in data["gradient"]["points"]:
+                xy = point["color"]["xy"]
+                r, g, b = xy_bri_to_rgb(xy["x"], xy["y"], bri)
+                colors.append({"r": r, "g": g, "b": b})
+        elif "color" in data and "xy" in data["color"]:
+            xy = data["color"]["xy"]
+            r, g, b = xy_bri_to_rgb(xy["x"], xy["y"], bri)
+            colors.append({"r": r, "g": g, "b": b})
+        else:
+            colors.append({"r": 0, "g": 0, "b": 0})
+
+    return colors if colors else [{"r": 0, "g": 0, "b": 0}]
+
+
+def fetch_current_colors(bridge_ip, api_key, light_id):
+    """Fetch the current color of a single light; used when a toggle-on event carries no color."""
+    headers = {"hue-application-key": api_key}
+    url = f"https://{bridge_ip}/clip/v2/resource/light/{light_id}"
+    resp = requests.get(url, headers=headers, verify=False, timeout=5)
+    resp.raise_for_status()
+    data = resp.json().get("data", [{}])[0]
+
+    bri = data.get("dimming", {}).get("brightness", 100.0) / 100.0
+    if "gradient" in data and data["gradient"].get("points"):
+        colors = []
+        for point in data["gradient"]["points"]:
+            xy = point["color"]["xy"]
+            r, g, b = xy_bri_to_rgb(xy["x"], xy["y"], bri)
+            colors.append({"r": r, "g": g, "b": b})
+        return colors
+    elif "color" in data and "xy" in data["color"]:
+        xy = data["color"]["xy"]
+        r, g, b = xy_bri_to_rgb(xy["x"], xy["y"], bri)
+        return [{"r": r, "g": g, "b": b}]
+    return [{"r": 0, "g": 0, "b": 0}]
+
+
 # ==========================================
 # COLOR CONVERSION
 # ==========================================
 
 
 def _clamp(v, lo=0.0, hi=1.0):
+    """Clamp a value between lo and hi."""
     return max(lo, min(hi, v))
 
 
 def _srgb_gamma(linear):
+    """Apply sRGB gamma correction to a linear light value."""
     if linear <= 0.0031308:
         return 12.92 * linear
     return 1.055 * (linear ** (1.0 / 2.4)) - 0.055
 
 
 def xy_bri_to_rgb(x, y, bri=1.0):
+    """Convert Hue CIE xy + brightness to an sRGB (r, g, b) tuple in 0-255 range."""
     if y == 0:
         return 0, 0, 0
     Y = bri
@@ -182,7 +243,7 @@ def xy_bri_to_rgb(x, y, bri=1.0):
 
 
 def start_cloudflared(local_port: int, timeout: int = 60) -> str:
-    # Kill any existing cloudflared processes first
+    """Kill any existing cloudflared processes, start a fresh tunnel, and return the wss:// URL."""
     subprocess.run(
         ["taskkill", "/f", "/im", "cloudflared.exe"],
         stdout=subprocess.DEVNULL,
@@ -195,7 +256,6 @@ def start_cloudflared(local_port: int, timeout: int = 60) -> str:
 
     def read_stderr(pipe):
         for line in pipe:
-            print(f"  [cloudflared] {line.rstrip()}")
             match = url_pattern.search(line)
             if match and not found_url:
                 found_url.append(line.strip())
@@ -240,6 +300,7 @@ def start_cloudflared(local_port: int, timeout: int = 60) -> str:
 
 
 def reload_signalrgb_effect(effect_name: str) -> None:
+    """Trigger SignalRGB to reload a named effect via its protocol URL handler."""
     from urllib.parse import quote
 
     effect_url = quote(effect_name, safe="")
@@ -264,6 +325,7 @@ def reload_signalrgb_effect(effect_name: str) -> None:
 
 
 def write_html(file_path: Path, wss_url: str) -> None:
+    """Write the SignalRGB effect HTML file with the current tunnel URL baked in."""
     html = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -330,6 +392,10 @@ def write_html(file_path: Path, wss_url: str) -> None:
 
 
 def extract_colors_from_event(data, watched_ids):
+    """
+    Parse SSE event data into a list of RGB dicts for watched lights.
+    Returns black on light-off; fetches current state from bridge on toggle-on with no color data.
+    """
     colors = []
     for event in data:
         if event.get("type") != "update":
@@ -339,7 +405,16 @@ def extract_colors_from_event(data, watched_ids):
                 continue
             if item.get("id") not in watched_ids:
                 continue
+
+            on_state = item.get("on", {})
+
+            # Light turned off — push black
+            if "on" in on_state and not on_state["on"]:
+                colors.append({"r": 0, "g": 0, "b": 0})
+                continue
+
             bri = item.get("dimming", {}).get("brightness", 100.0) / 100.0
+
             if "gradient" in item and item["gradient"].get("points"):
                 for point in item["gradient"]["points"]:
                     xy = point["color"]["xy"]
@@ -349,6 +424,15 @@ def extract_colors_from_event(data, watched_ids):
                 xy = item["color"]["xy"]
                 r, g, b = xy_bri_to_rgb(xy["x"], xy["y"], bri)
                 colors.append({"r": r, "g": g, "b": b})
+            elif "on" in on_state and on_state["on"]:
+                # Light toggled on but no color in event — fetch current state from bridge
+                print(
+                    f"  [hue] Toggle-on with no color data, fetching state for {item['id']} ..."
+                )
+                colors.extend(
+                    fetch_current_colors(BRIDGE_IP, APPLICATION_KEY, item["id"])
+                )
+
     return colors
 
 
@@ -358,6 +442,7 @@ def extract_colors_from_event(data, watched_ids):
 
 
 def hue_stream_thread(bridge_ip, api_key, watched_ids):
+    """Listen to the Hue bridge SSE event stream and broadcast color updates to WebSocket clients."""
     global _latest_colors
     url = f"https://{bridge_ip}/eventstream/clip/v2"
     headers = {"hue-application-key": api_key, "Accept": "text/event-stream"}
@@ -410,7 +495,8 @@ def hue_stream_thread(bridge_ip, api_key, watched_ids):
 
 
 def main():
-    global ENTERTAINMENT_ID
+    """Resolve zone/lights, seed initial color state, start cloudflared and Flask."""
+    global ENTERTAINMENT_ID, _latest_colors
 
     if not ENTERTAINMENT_ID:
         print(f"Resolving zone ID for '{ENTERTAINMENT_ZONE_NAME}' ...")
@@ -424,21 +510,24 @@ def main():
     print(f"  -> Watching {len(light_ids)} light(s): {light_ids}")
     watched_ids = set(light_ids)
 
-    # Start cloudflared and get tunnel URL
+    print("Fetching initial light state ...")
+    with _colors_lock:
+        _latest_colors = fetch_initial_colors(BRIDGE_IP, APPLICATION_KEY, light_ids)
+    rgb_preview = ", ".join(
+        f"rgb({c['r']},{c['g']},{c['b']})" for c in _latest_colors[:4]
+    )
+    print(f"  -> Initial colors: {rgb_preview}")
+
     wss_url = start_cloudflared(FLASK_PORT)
 
-    # Write HTML with tunnel URL baked in
     write_html(HUESYNC_HTML, wss_url)
     print(f"Effect file written: {HUESYNC_HTML}")
 
-    # Wait for DNS to propagate before SignalRGB tries to connect
-    print("Waiting for tunnel DNS to propagate ...")
+    print("Waiting for tunnel to be reachable ...")
     time.sleep(5)
 
-    # Reload effect in SignalRGB
     reload_signalrgb_effect("Hue Sync")
 
-    # Start Hue SSE listener in background thread
     hue_thread = threading.Thread(
         target=hue_stream_thread,
         args=(BRIDGE_IP, APPLICATION_KEY, watched_ids),
@@ -446,7 +535,6 @@ def main():
     )
     hue_thread.start()
 
-    # Start Flask (blocks forever)
     app.run(host="127.0.0.1", port=FLASK_PORT)
 
 
