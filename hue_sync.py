@@ -40,7 +40,11 @@ ENTERTAINMENT_ID = _config["hue"].get("entertainment_id", "")
 
 CERT_FILE = BASE_DIR / "localhost+1.pem"
 KEY_FILE = BASE_DIR / "localhost+1-key.pem"
-MKCERT_CAROOT = Path(subprocess.check_output(["mkcert", "-CAROOT"], text=True).strip())
+MKCERT_CAROOT = Path(
+    subprocess.check_output(
+        ["mkcert", "-CAROOT"], text=True, creationflags=subprocess.CREATE_NO_WINDOW
+    ).strip()
+)
 MKCERT_CA_CERT = MKCERT_CAROOT / "rootCA.pem"
 
 # ==========================================
@@ -253,6 +257,7 @@ def find_signalrgb_cacert() -> Path | None:
         ["wmic", "process", "where", "name='SignalRgb.exe'", "get", "ExecutablePath"],
         capture_output=True,
         text=True,
+        creationflags=subprocess.CREATE_NO_WINDOW,
     )
     for line in result.stdout.splitlines():
         line = line.strip()
