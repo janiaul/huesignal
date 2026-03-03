@@ -189,29 +189,6 @@ def fetch_current_colors(bridge_ip, api_key, light_id):
     return [{"r": 0, "g": 0, "b": 0}]
 
 
-def fetch_current_colors(bridge_ip, api_key, light_id):
-    """Fetch the current color of a single light; used when a toggle-on event carries no color."""
-    headers = {"hue-application-key": api_key}
-    url = f"https://{bridge_ip}/clip/v2/resource/light/{light_id}"
-    resp = requests.get(url, headers=headers, verify=False, timeout=5)
-    resp.raise_for_status()
-    data = resp.json().get("data", [{}])[0]
-
-    bri = data.get("dimming", {}).get("brightness", 100.0) / 100.0
-    if "gradient" in data and data["gradient"].get("points"):
-        colors = []
-        for point in data["gradient"]["points"]:
-            xy = point["color"]["xy"]
-            r, g, b = xy_bri_to_rgb(xy["x"], xy["y"], bri)
-            colors.append({"r": r, "g": g, "b": b})
-        return colors
-    elif "color" in data and "xy" in data["color"]:
-        xy = data["color"]["xy"]
-        r, g, b = xy_bri_to_rgb(xy["x"], xy["y"], bri)
-        return [{"r": r, "g": g, "b": b}]
-    return [{"r": 0, "g": 0, "b": 0}]
-
-
 # ==========================================
 # COLOR CONVERSION
 # ==========================================
