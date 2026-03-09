@@ -13,6 +13,7 @@ Drop a real tray.ico into assets/ and it will be used automatically.
 
 from __future__ import annotations
 
+import configparser
 import logging
 import os
 import threading
@@ -22,8 +23,8 @@ from typing import Callable
 import pystray
 from PIL import Image, ImageDraw, ImageFont
 
-from .color import Color, rgb_preview
-from .config import ASSETS_DIR, LOGS_DIR, TRAY_ICON
+from .color import Color
+from .config import ASSETS_DIR, CONFIG_FILE, LOGS_DIR, TRAY_ICON
 
 logger = logging.getLogger("huesync")
 
@@ -163,12 +164,8 @@ class TrayIcon:
 
     def _build_menu(self) -> pystray.Menu:
         return pystray.Menu(
-            # Dynamic color preview — re-evaluated each time menu opens
-            pystray.MenuItem(
-                lambda _: "Colors: " + rgb_preview(self._get_latest_colors()),
-                action=None,
-                enabled=False,
-            ),
+            pystray.MenuItem("Color preview", self._submenu_preview),
+            pystray.MenuItem("Settings", self._submenu_settings),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Restart stream", self._handle_restart),
             pystray.MenuItem("Open log", self._handle_open_log),
@@ -176,9 +173,64 @@ class TrayIcon:
             pystray.MenuItem("Exit", self._handle_exit),
         )
 
+    @property
+    def _submenu_preview(self) -> pystray.Menu:
+        """Dynamic submenu showing the current color gradient as rgb() values."""
+
+        def _items():
+            colors = self._get_latest_colors()
+            if not colors:
+                yield pystray.MenuItem("No color data", None, enabled=False)
+                return
+            for i, c in enumerate(colors, 1):
+                label = f"Light {i}:  rgb({c['r']}, {c['g']}, {c['b']})"
+                yield pystray.MenuItem(label, None, enabled=False)
+
+        return pystray.Menu(_items)
+
+    @property
+    def _submenu_settings(self) -> pystray.Menu:
+        """Submenu with toggle actions for logging and tray icon."""
+
+        def _items():
+            cfg = configparser.ConfigParser()
+            cfg.read(CONFIG_FILE, encoding="utf-8")
+            logging_on = cfg.getboolean("general", "logging", fallback=False)
+            tray_icon_on = cfg.getboolean("general", "tray_icon", fallback=True)
+
+            yield pystray.MenuItem(
+                f"Logging: {'on' if logging_on else 'off'}",
+                self._handle_toggle_logging,
+            )
+            yield pystray.MenuItem(
+                f"Tray icon: {'on' if tray_icon_on else 'off'}  (restart required)",
+                self._handle_toggle_tray,
+            )
+
+        return pystray.Menu(_items)
+
     # ------------------------------------------------------------------
     # Menu handlers
     # ------------------------------------------------------------------
+
+    def _handle_toggle_logging(
+        self, icon: pystray.Icon, item: pystray.MenuItem
+    ) -> None:
+        self._toggle_config_bool("logging")
+
+    def _handle_toggle_tray(self, icon: pystray.Icon, item: pystray.MenuItem) -> None:
+        self._toggle_config_bool("tray_icon")
+
+    def _toggle_config_bool(self, key: str) -> None:
+        cfg = configparser.ConfigParser()
+        cfg.read(CONFIG_FILE, encoding="utf-8")
+        if not cfg.has_section("general"):
+            cfg.add_section("general")
+        current = cfg.getboolean("general", key, fallback=False)
+        cfg.set("general", key, str(not current).lower())
+        with open(CONFIG_FILE, "w", encoding="utf-8") as fh:
+            cfg.write(fh)
+        logger.info("[tray] Settings: %s → %s", key, not current)
 
     def _handle_restart(self, icon: pystray.Icon, item: pystray.MenuItem) -> None:
         logger.info("[tray] Restart stream requested.")
