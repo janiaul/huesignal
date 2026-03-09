@@ -1,10 +1,21 @@
-__pycache__/
-*.py[cod]
+config.ini
+
+certs/*
+!certs/.gitkeep
+
+logs/*
+!logs/.gitkeep
+
+effects/HueSync.html
+
+assets/*
+!assets/.gitkeep
 
 .history/
-tests/
+__pycache__/
+*.pyc
+*.pyo
 
-config.ini
-*.html
-*.pem
-*.log
+dist/
+build/
+*.spec
