@@ -24,7 +24,7 @@ import pystray
 from PIL import Image, ImageDraw, ImageFont
 
 from .color import Color
-from .config import ASSETS_DIR, CONFIG_FILE, LOGS_DIR, TRAY_ICON
+from .config import ASSETS_DIR, CONFIG_FILE, HUESIGNAL_HTML, LOGS_DIR, TRAY_ICON
 
 logger = logging.getLogger("huesignal")
 
@@ -189,6 +189,8 @@ class TrayIcon:
         """Dynamic submenu showing the current color gradient as rgb() values."""
 
         def _items():
+            yield pystray.MenuItem("Open in browser", self._handle_open_browser)
+            yield pystray.Menu.SEPARATOR
             colors = self._get_latest_colors()
             if not colors:
                 yield pystray.MenuItem("No color data", None, enabled=False)
@@ -242,6 +244,12 @@ class TrayIcon:
         with open(CONFIG_FILE, "w", encoding="utf-8") as fh:
             cfg.write(fh)
         logger.info("[tray] Settings: %s → %s", key, not current)
+
+    def _handle_open_browser(self, icon: pystray.Icon, item: pystray.MenuItem) -> None:
+        try:
+            os.startfile(str(HUESIGNAL_HTML))
+        except OSError as exc:
+            logger.warning("[tray] Could not open browser: %s", exc)
 
     def _handle_restart(self, icon: pystray.Icon, item: pystray.MenuItem) -> None:
         logger.info("[tray] Restart stream requested.")
