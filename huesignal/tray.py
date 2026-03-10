@@ -83,6 +83,7 @@ class TrayIcon:
         self._status = StreamStatus.STARTING
         self._lock = threading.Lock()
         self._ready = False
+        self._paused = False
         self._base_image = self._load_base_image()
 
         self._icon = pystray.Icon(
@@ -136,6 +137,18 @@ class TrayIcon:
         """Remove the tray icon and unblock run()."""
         self._icon.stop()
 
+    @property
+    def is_paused(self) -> bool:
+        with self._lock:
+            return self._paused
+
+    def toggle_pause(self) -> None:
+        """Toggle the paused state. Thread-safe."""
+        with self._lock:
+            self._paused = not self._paused
+            paused = self._paused
+        logger.info("[tray] Sync %s.", "paused" if paused else "resumed")
+
     # ------------------------------------------------------------------
     # Icon rendering
     # ------------------------------------------------------------------
@@ -178,6 +191,10 @@ class TrayIcon:
             pystray.MenuItem("Color preview", self._submenu_preview),
             pystray.MenuItem("Settings", self._submenu_settings),
             pystray.Menu.SEPARATOR,
+            pystray.MenuItem(
+                lambda _: "Resume sync" if self._paused else "Pause sync",
+                self._handle_toggle_pause,
+            ),
             pystray.MenuItem("Restart stream", self._handle_restart),
             pystray.MenuItem("Open log", self._handle_open_log),
             pystray.Menu.SEPARATOR,
@@ -250,6 +267,9 @@ class TrayIcon:
             os.startfile(str(HUESIGNAL_HTML))
         except OSError as exc:
             logger.warning("[tray] Could not open browser: %s", exc)
+
+    def _handle_toggle_pause(self, icon: pystray.Icon, item: pystray.MenuItem) -> None:
+        self.toggle_pause()
 
     def _handle_restart(self, icon: pystray.Icon, item: pystray.MenuItem) -> None:
         logger.info("[tray] Restart stream requested.")

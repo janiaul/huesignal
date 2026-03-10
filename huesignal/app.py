@@ -50,6 +50,7 @@ class HueSignalApp:
         self._stream: HueStreamThread | None = None
         self._stream_interrupt = threading.Event()
         self._shutdown_event = threading.Event()
+        self._paused = False
 
     # ------------------------------------------------------------------
     # Entry point
@@ -164,6 +165,8 @@ class HueSignalApp:
 
     def _on_colors(self, colors: list[Color]) -> None:
         """Receive new colors from the Hue stream and push to server."""
+        if self._tray and self._tray.is_paused:
+            return
         if self._server:
             self._server.push_colors(colors)
 
