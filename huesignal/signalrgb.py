@@ -183,7 +183,7 @@ def patch_cacert(cacert_path: Path, mkcert_ca_path: Path) -> None:
         time.sleep(6)
     else:
         logger.warning(
-            "[signalrgb] Skipped restart — Hue Signal effect may not work until "
+            "[signalrgb] Skipped restart — Hue Sync effect may not work until "
             "SignalRGB is restarted manually."
         )
 

@@ -287,7 +287,7 @@ class TrayIcon:
             except OSError as exc:
                 logger.warning("[tray] Could not open log: %s", exc)
         else:
-            logger.info("[tray] No log file at %s", log_file)
+            logger.debug("[tray] No log file at %s", log_file)
 
     def _handle_exit(self, icon: pystray.Icon, item: pystray.MenuItem) -> None:
         logger.info("[tray] Exit requested.")

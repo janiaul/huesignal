@@ -39,6 +39,7 @@ class AppConfig:
     entertainment_zone_name: str
     entertainment_id: str = ""
     logging_enabled: bool = False
+    log_level: str = "INFO"
     tray_icon: bool = True
 
     # Populated after zone resolution, not from file
@@ -77,6 +78,7 @@ class AppConfig:
             entertainment_zone_name=parser["hue"]["entertainment_zone_name"].strip(),
             entertainment_id=parser["hue"].get("entertainment_id", "").strip(),
             logging_enabled=parser["general"].getboolean("logging", fallback=False),
+            log_level=parser["general"].get("log_level", "INFO").strip().upper(),
             tray_icon=parser["general"].getboolean("tray_icon", fallback=True),
         )
 
@@ -91,12 +93,13 @@ class AppConfig:
 
 def setup_logging(cfg: AppConfig) -> None:
     """Configure the root huesignal logger based on AppConfig."""
-    logger.setLevel(logging.DEBUG)
+    level = getattr(logging, cfg.log_level, logging.INFO)
+    logger.setLevel(level)
     fmt = logging.Formatter("%(asctime)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 
     stream = logging.StreamHandler()
     stream.setFormatter(fmt)
-    stream.setLevel(logging.DEBUG)
+    stream.setLevel(level)
     logger.addHandler(stream)
 
     if cfg.logging_enabled:

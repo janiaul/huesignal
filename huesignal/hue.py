@@ -255,7 +255,7 @@ class HueStreamThread(threading.Thread):
                     buffer: list[str] = []
                     for raw_line in resp.iter_lines(decode_unicode=True):
                         if self._interrupt.is_set():
-                            logger.info("[hue] Stream interrupted — reconnecting.")
+                            logger.warning("[hue] Stream interrupted — reconnecting.")
                             break
                         if raw_line.startswith("data:"):
                             buffer.append(raw_line[5:].strip())
@@ -306,7 +306,7 @@ class HueStreamThread(threading.Thread):
             colors, needs_fetch = extract_colors_from_event(events, watched, cfg)
             if colors:
                 if self._colors_match(colors, self._last_color_event, tol=1):
-                    logger.info("[hue] Color event skipped — duplicate scene recall.")
+                    logger.debug("[hue] Color event skipped — duplicate scene recall.")
                 else:
                     self._last_color_event = colors
                     self._push(colors)

@@ -167,6 +167,7 @@ class HueSignalApp:
     def _on_colors(self, colors: list[Color]) -> None:
         """Receive new colors from the Hue stream and push to server."""
         if self._tray and self._tray.is_paused:
+            logger.debug("[app] Push suppressed — sync paused.")
             return
         if self._server:
             self._server.push_colors(colors)
