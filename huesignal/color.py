@@ -1,4 +1,4 @@
-"""Pure color conversion utilities — no I/O, no side effects."""
+"""Pure color conversion utilities - no I/O, no side effects."""
 
 from typing import TypedDict
 

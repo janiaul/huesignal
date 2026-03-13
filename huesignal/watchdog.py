@@ -1,4 +1,4 @@
-"""BridgeMonitor — periodic bridge reachability check.
+"""BridgeMonitor - periodic bridge reachability check.
 
 Pings the Hue bridge every PING_INTERVAL seconds. On state transitions:
   reachable → unreachable : fires on_lost callback  (toast + tray update)
@@ -75,23 +75,23 @@ class BridgeMonitor(threading.Thread):
             now_reachable = self._ping()
 
             if reachable is None:
-                # First check — establish baseline silently
+                # First check - establish baseline silently
                 reachable = now_reachable
             elif now_reachable and not reachable:
                 reachable = True
-                logger.info("[monitor] Bridge reachable — connection restored.")
+                logger.info("[monitor] Bridge reachable - connection restored.")
                 threading.Thread(
                     target=_send_toast,
-                    args=("HueSignal — Connected", "Hue bridge connection restored."),
+                    args=("HueSignal - Connected", "Hue bridge connection restored."),
                     daemon=True,
                 ).start()
                 threading.Thread(target=self._on_restored, daemon=True).start()
             elif not now_reachable and reachable:
                 reachable = False
-                logger.warning("[monitor] Bridge unreachable — connection lost.")
+                logger.warning("[monitor] Bridge unreachable - connection lost.")
                 threading.Thread(
                     target=_send_toast,
-                    args=("HueSignal — Disconnected", "Lost connection to Hue bridge."),
+                    args=("HueSignal - Disconnected", "Lost connection to Hue bridge."),
                     daemon=True,
                 ).start()
                 threading.Thread(target=self._on_lost, daemon=True).start()

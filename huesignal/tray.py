@@ -1,11 +1,11 @@
-"""System tray icon — status display, color preview, and context menu.
+"""System tray icon - status display, color preview, and context menu.
 
 Status states
 -------------
-STARTING     Grey dot  — app is initialising
-CONNECTING   Amber dot — attempting to reach the bridge
-CONNECTED    Green dot — SSE stream is live
-RECONNECTING Red dot   — stream lost, retrying
+STARTING     Grey dot  - app is initialising
+CONNECTING   Amber dot - attempting to reach the bridge
+CONNECTED    Green dot - SSE stream is live
+RECONNECTING Red dot   - stream lost, retrying
 
 The base icon is generated programmatically so no external .ico is required.
 Drop a real tray.ico into assets/ and it will be used automatically.
@@ -66,7 +66,7 @@ _STATUS_LABELS: dict[StreamStatus, str] = {
 class TrayIcon:
     """Manages the system tray icon lifecycle.
 
-    Call run() on the main thread — it blocks until the user clicks Exit.
+    Call run() on the main thread - it blocks until the user clicks Exit.
     All other methods are safe to call from any thread.
     """
 
@@ -117,7 +117,7 @@ class TrayIcon:
         threading.Timer(0.5, self._apply_status, args=(status,)).start()
 
     def _apply_status(self, status: StreamStatus) -> None:
-        """Write the current status to the icon — always reflects latest value."""
+        """Write the current status to the icon - always reflects latest value."""
         with self._lock:
             status = self._status  # re-read in case it changed during the delay
         self._icon.icon = self._render_icon(status)
@@ -170,7 +170,7 @@ class TrayIcon:
                 return img.resize((_ICON_SIZE, _ICON_SIZE), Image.LANCZOS)
             except Exception as exc:
                 logger.warning(
-                    "[tray] Could not load %s: %s — using placeholder.", TRAY_ICON, exc
+                    "[tray] Could not load %s: %s - using placeholder.", TRAY_ICON, exc
                 )
         return _make_placeholder()
 
@@ -189,7 +189,7 @@ class TrayIcon:
 
     @staticmethod
     def _make_tooltip(status: StreamStatus) -> str:
-        return f"HueSignal — {_STATUS_LABELS[status]}"
+        return f"HueSignal - {_STATUS_LABELS[status]}"
 
     # ------------------------------------------------------------------
     # Menu  (dynamic items avoid full rebuild on every color update)
@@ -315,7 +315,7 @@ def _gradient_color(t: float) -> tuple:
 
 
 def _make_placeholder() -> Image.Image:
-    """Generate the HueSignal 'HS' lettermark icon — used when no tray.ico is present."""
+    """Generate the HueSignal 'HS' lettermark icon - used when no tray.ico is present."""
     size = _ICON_SIZE
     pad = _ICON_PAD
     # Square occupies the padded area, leaving room for dot to overflow the corner
@@ -330,7 +330,7 @@ def _make_placeholder() -> Image.Image:
             r, g, b = _gradient_color(t)
             sq_img.putpixel((x, y), (r, g, b, 255))
 
-    # Rounder corners — more circular feel
+    # Rounder corners - more circular feel
     radius = sq // 5
     mask = Image.new("L", (sq, sq), 0)
     ImageDraw.Draw(mask).rounded_rectangle(

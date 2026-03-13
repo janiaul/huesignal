@@ -1,4 +1,4 @@
-"""HueSignalApp — owns the full application lifecycle.
+"""HueSignalApp - owns the full application lifecycle.
 
 Startup sequence
 ----------------
@@ -100,7 +100,7 @@ class HueSignalApp:
         except Exception as exc:
             logger.warning("[signalrgb] Setup failed (non-fatal): %s", exc)
 
-        # 8. Tray icon (optional — controlled by [general] tray_icon in config.ini)
+        # 8. Tray icon (optional - controlled by [general] tray_icon in config.ini)
         if cfg.tray_icon:
             tray = TrayIcon(
                 on_restart_stream=self._restart_stream,
@@ -130,7 +130,7 @@ class HueSignalApp:
         )
         PowerMonitor(on_wake=wake_handler).start()
 
-        # 11. Bridge monitor — periodic ping for toast notifications and tray status
+        # 11. Bridge monitor - periodic ping for toast notifications and tray status
         monitor = BridgeMonitor(
             cfg=cfg,
             on_lost=self._on_bridge_lost,
@@ -139,7 +139,7 @@ class HueSignalApp:
         monitor.start()
         self._monitor = monitor
 
-        # 11. Flask on a background thread — frees main thread for pystray
+        # 11. Flask on a background thread - frees main thread for pystray
         flask_thread = threading.Thread(
             target=server.run,
             name="flask",
@@ -157,10 +157,10 @@ class HueSignalApp:
             tray_thread.start()
         else:
             logger.info(
-                "[app] Tray icon disabled — running headless. Use Ctrl+C to stop."
+                "[app] Tray icon disabled - running headless. Use Ctrl+C to stop."
             )
 
-        # 13. Main thread blocks here — interruptible by Ctrl+C or by
+        # 13. Main thread blocks here - interruptible by Ctrl+C or by
         # _shutdown_event.set() from the tray Exit menu item.
         try:
             self._shutdown_event.wait()
@@ -178,7 +178,7 @@ class HueSignalApp:
     def _on_colors(self, colors: list[Color]) -> None:
         """Receive new colors from the Hue stream and push to server."""
         if self._tray and self._tray.is_paused:
-            logger.debug("[app] Push suppressed — sync paused.")
+            logger.debug("[app] Push suppressed - sync paused.")
             return
         if self._tray and self._tray.current_status == StreamStatus.RECONNECTING:
             self._tray.set_status(StreamStatus.CONNECTED)
@@ -335,7 +335,7 @@ def _fatal(message: str) -> None:
     try:
         root = tk.Tk()
         root.withdraw()
-        tkmb.showerror("HueSignal — Fatal Error", message)
+        tkmb.showerror("HueSignal - Fatal Error", message)
         root.destroy()
     except Exception:
         pass

@@ -173,7 +173,7 @@ def extract_colors_from_event(
             if event_colors:
                 colors.extend(event_colors)
             else:
-                # No inline color data — brightness change or toggle-on.
+                # No inline color data - brightness change or toggle-on.
                 # Caller decides whether to fetch based on context.
                 reason = (
                     "toggle-on"
@@ -196,7 +196,7 @@ class HueStreamThread(threading.Thread):
     *on_colors* whenever new color data arrives.
 
     Uses requests for SSE streaming with an infinite read timeout. The Hue
-    bridge sends no keepalives — it only writes on light state changes — so
+    bridge sends no keepalives - it only writes on light state changes - so
     the stream may be idle indefinitely. interrupt() sets a flag that is
     checked each time iter_lines() yields; restart latency is bounded by
     how long until the next bridge event.
@@ -264,7 +264,7 @@ class HueStreamThread(threading.Thread):
                         for raw_line in resp.iter_lines(decode_unicode=True):
                             if self._interrupt.is_set():
                                 logger.warning(
-                                    "[hue] Stream interrupted — reconnecting."
+                                    "[hue] Stream interrupted - reconnecting."
                                 )
                                 break
                             if raw_line.startswith("data:"):
@@ -281,7 +281,7 @@ class HueStreamThread(threading.Thread):
                 while cause is not None:
                     if isinstance(cause, ConnectionAbortedError):
                         logger.warning(
-                            "[hue] Connection closed by bridge — reconnecting."
+                            "[hue] Connection closed by bridge - reconnecting."
                         )
                         break
                     cause = getattr(cause, "__cause__", None) or getattr(
@@ -291,7 +291,7 @@ class HueStreamThread(threading.Thread):
                     logger.error("[hue] Stream error: %s", exc)
             except AttributeError:
                 # resp.close() from interrupt() can null the internal file pointer
-                # while iter_lines() is still reading — treat it as a clean interrupt.
+                # while iter_lines() is still reading - treat it as a clean interrupt.
                 logger.debug("[hue] Stream closed during read.")
             except Exception:
                 logger.exception("[hue] Unhandled exception in stream thread")
@@ -318,7 +318,7 @@ class HueStreamThread(threading.Thread):
     def _push(self, colors: list[Color], label: str = "") -> None:
         """Push colors to the callback, skipping if nearly identical to last push."""
         if self._colors_match(colors, self._last_pushed):
-            logger.debug("[hue] Push skipped — colors unchanged.")
+            logger.debug("[hue] Push skipped - colors unchanged.")
             return
         self._last_pushed = colors
         suffix = f" ({label})" if label else ""
@@ -327,14 +327,14 @@ class HueStreamThread(threading.Thread):
 
     def _dispatch(self, payload: str, cfg: AppConfig) -> None:
         if self._interrupt.is_set():
-            return  # restart in progress — discard stale events
+            return  # restart in progress - discard stale events
         watched = set(cfg.resolved_light_ids)
         try:
             events = json.loads(payload)
             colors, needs_fetch = extract_colors_from_event(events, watched, cfg)
             if colors:
                 if self._colors_match(colors, self._last_color_event, tol=1):
-                    logger.debug("[hue] Color event skipped — duplicate scene recall.")
+                    logger.debug("[hue] Color event skipped - duplicate scene recall.")
                 else:
                     self._last_color_event = colors
                     self._push(colors)

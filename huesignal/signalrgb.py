@@ -1,4 +1,4 @@
-"""SignalRGB integration — cacert patching, HTML effect writing, process management."""
+"""SignalRGB integration - cacert patching, HTML effect writing, process management."""
 
 from __future__ import annotations
 
@@ -160,7 +160,7 @@ def patch_cacert(cacert_path: Path, mkcert_ca_path: Path) -> None:
 
     if ca_text.strip() in existing:
         logger.info(
-            "[signalrgb] mkcert CA already present in cacert.pem — no changes needed."
+            "[signalrgb] mkcert CA already present in cacert.pem - no changes needed."
         )
         return
 
@@ -183,7 +183,7 @@ def patch_cacert(cacert_path: Path, mkcert_ca_path: Path) -> None:
         time.sleep(6)
     else:
         logger.warning(
-            "[signalrgb] Skipped restart — Hue Sync effect may not work until "
+            "[signalrgb] Skipped restart - Hue Sync effect may not work until "
             "SignalRGB is restarted manually."
         )
 
@@ -198,7 +198,7 @@ def setup_signalrgb(mkcert_ca_path: Path) -> None:
         patch_cacert(cacert_path, mkcert_ca_path)
     else:
         logger.info(
-            "[signalrgb] Not running or cacert.pem not found — skipping cacert patch."
+            "[signalrgb] Not running or cacert.pem not found - skipping cacert patch."
         )
 
 
@@ -211,7 +211,7 @@ def _prompt_restart() -> bool:
     result = ctypes.windll.user32.MessageBoxW(
         0,
         "The certificate store was updated and SignalRGB needs to restart.\n\nRestart now?",
-        "HueSignal — Restart SignalRGB",
+        "HueSignal - Restart SignalRGB",
         _MB_YESNO | _MB_ICONQUESTION | _MB_SETFOREGROUND,
     )
     return result == _IDYES
@@ -240,7 +240,7 @@ def _restart_signalrgb() -> None:
 
     if not _SIGNAL_LAUNCHER.exists():
         logger.error(
-            "[signalrgb] Launcher not found at %s — cannot relaunch.", _SIGNAL_LAUNCHER
+            "[signalrgb] Launcher not found at %s - cannot relaunch.", _SIGNAL_LAUNCHER
         )
         return
 

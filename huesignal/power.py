@@ -66,7 +66,7 @@ class PowerMonitor(threading.Thread):
 
         def wnd_proc(hwnd, msg, wparam, lparam):
             if msg == WM_POWERBROADCAST and wparam == PBT_APMRESUMEAUTOMATIC:
-                logger.info("[power] Wake event detected — triggering reconnect ...")
+                logger.info("[power] Wake event detected - triggering reconnect ...")
                 threading.Thread(target=self._on_wake, daemon=True).start()
             return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
@@ -135,7 +135,7 @@ def make_wake_handler(
                     logger.warning("[power] Network not ready yet: %s", exc)
 
             logger.warning(
-                "[power] Gave up re-seeding after wake — stream reconnect will recover."
+                "[power] Gave up re-seeding after wake - stream reconnect will recover."
             )
         finally:
             # Always unblock the stream thread, even if re-seeding failed

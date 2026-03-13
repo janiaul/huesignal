@@ -1,4 +1,4 @@
-"""Entry point — allows running the package with `python -m huesignal`."""
+"""Entry point - allows running the package with `python -m huesignal`."""
 
 from .app import HueSignalApp
 

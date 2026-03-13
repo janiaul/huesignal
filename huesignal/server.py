@@ -1,4 +1,4 @@
-"""Flask/WebSocket server — completely decoupled from Hue logic.
+"""Flask/WebSocket server - completely decoupled from Hue logic.
 
 The server owns no Hue state. It receives color updates via push_colors()
 and broadcasts them to all connected WebSocket clients.
