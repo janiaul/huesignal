@@ -144,6 +144,11 @@ class TrayIcon:
         with self._lock:
             return self._paused
 
+    @property
+    def current_status(self) -> StreamStatus:
+        with self._lock:
+            return self._status
+
     def toggle_pause(self) -> None:
         """Toggle the paused state. Thread-safe."""
         with self._lock:

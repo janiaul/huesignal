@@ -289,6 +289,10 @@ class HueStreamThread(threading.Thread):
                     )
                 else:
                     logger.error("[hue] Stream error: %s", exc)
+            except AttributeError:
+                # resp.close() from interrupt() can null the internal file pointer
+                # while iter_lines() is still reading — treat it as a clean interrupt.
+                logger.debug("[hue] Stream closed during read.")
             except Exception:
                 logger.exception("[hue] Unhandled exception in stream thread")
 
@@ -365,7 +369,12 @@ def _headers(cfg: AppConfig) -> dict[str, str]:
 
 
 def _get(cfg: AppConfig, url: str) -> requests.Response:
-    resp = requests.get(url, headers=_headers(cfg), verify=False, timeout=5)
+    resp = requests.get(
+        url,
+        headers={**_headers(cfg), "Connection": "close"},
+        verify=False,
+        timeout=5,
+    )
     resp.raise_for_status()
     return resp
 

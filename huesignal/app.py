@@ -30,6 +30,7 @@ from .hue import (
     resolve_light_ids,
     resolve_zone_id,
 )
+from .watchdog import BridgeMonitor
 from .power import PowerMonitor, make_wake_handler
 from .server import ColorServer
 from .signalrgb import setup_signalrgb
@@ -48,6 +49,7 @@ class HueSignalApp:
         self._server: ColorServer | None = None
         self._tray: TrayIcon | None = None
         self._stream: HueStreamThread | None = None
+        self._monitor: BridgeMonitor | None = None
         self._stream_interrupt = threading.Event()
         self._shutdown_event = threading.Event()
         self._paused = False
@@ -128,6 +130,15 @@ class HueSignalApp:
         )
         PowerMonitor(on_wake=wake_handler).start()
 
+        # 11. Bridge monitor — periodic ping for toast notifications and tray status
+        monitor = BridgeMonitor(
+            cfg=cfg,
+            on_lost=self._on_bridge_lost,
+            on_restored=self._on_bridge_restored,
+        )
+        monitor.start()
+        self._monitor = monitor
+
         # 11. Flask on a background thread — frees main thread for pystray
         flask_thread = threading.Thread(
             target=server.run,
@@ -169,6 +180,8 @@ class HueSignalApp:
         if self._tray and self._tray.is_paused:
             logger.debug("[app] Push suppressed — sync paused.")
             return
+        if self._tray and self._tray.current_status == StreamStatus.RECONNECTING:
+            self._tray.set_status(StreamStatus.CONNECTED)
         if self._server:
             self._server.push_colors(colors)
 
@@ -179,6 +192,17 @@ class HueSignalApp:
         status = STATUS_MAP.get(status_str)
         if status:
             self._tray.set_status(status)
+
+    def _on_bridge_lost(self) -> None:
+        """Called by BridgeMonitor when bridge becomes unreachable."""
+        if self._tray is not None:
+            self._tray.set_status(StreamStatus.RECONNECTING)
+
+    def _on_bridge_restored(self) -> None:
+        """Called by BridgeMonitor when bridge becomes reachable again."""
+        if self._stream is not None:
+            self._stream.interrupt()
+        threading.Thread(target=self._reseed_colors, daemon=True).start()
 
     def _reseed_colors(self) -> None:
         """Fetch current light state from bridge and push to all clients."""
