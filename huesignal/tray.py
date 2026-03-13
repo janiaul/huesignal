@@ -29,8 +29,8 @@ from .config import ASSETS_DIR, CONFIG_FILE, HUESIGNAL_HTML, LOGS_DIR, TRAY_ICON
 logger = logging.getLogger("huesignal")
 
 _ICON_SIZE = 64
-_DOT_RADIUS = 10
-_DOT_MARGIN = 4
+_DOT_RADIUS = 11
+_ICON_PAD = 7  # padding around HS square to leave room for dot
 
 
 class StreamStatus(Enum):
@@ -175,15 +175,15 @@ class TrayIcon:
         return _make_placeholder()
 
     def _render_icon(self, status: StreamStatus) -> Image.Image:
-        """Overlay a coloured status dot on the base icon."""
+        """Overlay a coloured status dot centred on the bottom-right corner of the HS square."""
         img = self._base_image.copy()
         d = ImageDraw.Draw(img)
         dot_color = _STATUS_COLORS[status]
         r = _DOT_RADIUS
-        cx = _ICON_SIZE - r - _DOT_MARGIN
-        cy = _ICON_SIZE - r - _DOT_MARGIN
+        cx = _ICON_SIZE - r - 2
+        cy = _ICON_SIZE - r - 2
         # Dark border ring for legibility on any taskbar colour
-        d.ellipse([cx - r - 1, cy - r - 1, cx + r + 1, cy + r + 1], fill=(0, 0, 0, 180))
+        d.ellipse([cx - r - 1, cy - r - 1, cx + r + 1, cy + r + 1], fill=(0, 0, 0, 200))
         d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(*dot_color, 255))
         return img
 
@@ -305,28 +305,64 @@ class TrayIcon:
 # ------------------------------------------------------------------
 
 
+def _lerp_color(c1: tuple, c2: tuple, t: float) -> tuple:
+    return tuple(int(c1[i] + (c2[i] - c1[i]) * t) for i in range(3))
+
+
+def _gradient_color(t: float) -> tuple:
+    """Two-stop gradient: electric blue → deep indigo (v5)."""
+    return _lerp_color((0, 71, 255), (59, 0, 204), t)
+
+
 def _make_placeholder() -> Image.Image:
-    """Generate a clean 'H' glyph icon — used when no tray.ico is present."""
+    """Generate the HueSignal 'HS' lettermark icon — used when no tray.ico is present."""
     size = _ICON_SIZE
+    pad = _ICON_PAD
+    # Square occupies the padded area, leaving room for dot to overflow the corner
+    sq = size - pad * 2
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+
+    # Diagonal two-stop gradient on the square
+    sq_img = Image.new("RGBA", (sq, sq), (0, 0, 0, 0))
+    for y in range(sq):
+        for x in range(sq):
+            t = (x + y) / (sq * 2)
+            r, g, b = _gradient_color(t)
+            sq_img.putpixel((x, y), (r, g, b, 255))
+
+    # Rounder corners — more circular feel
+    radius = sq // 5
+    mask = Image.new("L", (sq, sq), 0)
+    ImageDraw.Draw(mask).rounded_rectangle(
+        [0, 0, sq - 1, sq - 1], radius=radius, fill=255
+    )
+    sq_img.putalpha(mask)
+
+    img.paste(sq_img, (pad, pad), sq_img)
+
     d = ImageDraw.Draw(img)
 
-    # Background circle
-    pad = 2
-    d.ellipse([pad, pad, size - pad, size - pad], fill=(45, 55, 72, 255))
-
-    # "H" glyph — try Segoe UI first, fall back to built-in default
-    try:
-        font = ImageFont.truetype("segoeui.ttf", size=36)
-    except (IOError, OSError):
+    # Bold font for the lettermark
+    font = None
+    for name in ["segoeuib.ttf", "arialbd.ttf", "calibrib.ttf"]:
+        try:
+            font = ImageFont.truetype(name, int(sq * 0.56))
+            break
+        except (IOError, OSError):
+            continue
+    if font is None:
         font = ImageFont.load_default()
 
-    text = "H"
+    text = "HS"
     bbox = d.textbbox((0, 0), text, font=font)
     tw = bbox[2] - bbox[0]
     th = bbox[3] - bbox[1]
-    tx = (size - tw) / 2 - bbox[0]
-    ty = (size - th) / 2 - bbox[1] - 2
-    d.text((tx, ty), text, font=font, fill=(255, 255, 255, 255))
+    # Centre within the square
+    tx = pad + (sq - tw) // 2 - bbox[0]
+    ty = pad + (sq - th) // 2 - bbox[1] - max(1, sq // 20)
+
+    s = max(1, sq // 32)
+    d.text((tx + s, ty + s * 2), text, font=font, fill=(0, 0, 60, 110))
+    d.text((tx, ty), text, font=font, fill=(240, 245, 255, 255))
 
     return img
