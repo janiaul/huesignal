@@ -223,6 +223,7 @@ class HueStreamThread(threading.Thread):
         self._last_color_event: list[Color] = []
         self._resp: Optional[requests.Response] = None
         self._resp_lock = threading.Lock()
+        self._watched_ids: frozenset[str] = frozenset(cfg.resolved_light_ids)
 
     def interrupt(self) -> None:
         """Signal the stream to reconnect and unblock iter_lines() immediately."""
@@ -328,7 +329,7 @@ class HueStreamThread(threading.Thread):
     def _dispatch(self, payload: str, cfg: AppConfig) -> None:
         if self._interrupt.is_set():
             return  # restart in progress - discard stale events
-        watched = set(cfg.resolved_light_ids)
+        watched = self._watched_ids
         try:
             events = json.loads(payload)
             colors, needs_fetch = extract_colors_from_event(events, watched, cfg)
