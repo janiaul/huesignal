@@ -15,11 +15,10 @@ Startup sequence
 
 from __future__ import annotations
 
+import ctypes
 import logging
 import subprocess
 import threading
-import tkinter as tk
-import tkinter.messagebox as tkmb
 from pathlib import Path
 
 from .config import AppConfig, ConfigError, setup_logging
@@ -139,7 +138,7 @@ class HueSignalApp:
         monitor.start()
         self._monitor = monitor
 
-        # 11. Flask on a background thread - frees main thread for pystray
+        # 12. Flask on a background thread - frees main thread for pystray
         flask_thread = threading.Thread(
             target=server.run,
             name="flask",
@@ -149,7 +148,7 @@ class HueSignalApp:
 
         logger.info("All subsystems started.")
 
-        # 12. Tray icon on a daemon thread (only if enabled in config)
+        # 13. Tray icon on a daemon thread (only if enabled in config)
         if cfg.tray_icon:
             tray_thread = threading.Thread(
                 target=self._tray.run, name="tray", daemon=True
@@ -330,13 +329,12 @@ class HueSignalApp:
 
 
 def _fatal(message: str) -> None:
-    """Log, show a GUI dialog, and exit."""
+    """Log, show a native Win32 error dialog, and exit."""
     logger.critical("FATAL: %s", message)
-    try:
-        root = tk.Tk()
-        root.withdraw()
-        tkmb.showerror("HueSignal - Fatal Error", message)
-        root.destroy()
-    except Exception:
-        pass
+    ctypes.windll.user32.MessageBoxW(
+        0,
+        message,
+        "HueSignal - Fatal Error",
+        0x10 | 0x10000,  # MB_ICONERROR | MB_SETFOREGROUND
+    )
     raise SystemExit(1)
