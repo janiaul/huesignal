@@ -174,6 +174,22 @@ def patch_cacert(cacert_path: Path, mkcert_ca_path: Path) -> None:
         )
 
 
+def _is_safe_cacert_path(path: Path) -> bool:
+    """Return True only if path is a plausible SignalRGB cacert.pem location.
+
+    Guards against writing to an unexpected location if the exe path returned
+    by psutil is somehow malformed or points outside the user's AppData tree.
+    """
+    if path.name.lower() != "cacert.pem":
+        return False
+    try:
+        app_data = (Path.home() / "AppData").resolve()
+        path.resolve().relative_to(app_data)
+        return True
+    except ValueError:
+        return False
+
+
 def setup_signalrgb(mkcert_ca_path: Path) -> None:
     """Top-level entry point: write HTML, create symlink, patch cacert if needed."""
     write_effect_html()
@@ -181,7 +197,12 @@ def setup_signalrgb(mkcert_ca_path: Path) -> None:
 
     cacert_path = find_cacert()
     if cacert_path and cacert_path.exists():
-        patch_cacert(cacert_path, mkcert_ca_path)
+        if _is_safe_cacert_path(cacert_path):
+            patch_cacert(cacert_path, mkcert_ca_path)
+        else:
+            logger.warning(
+                "[signalrgb] Refusing to patch cacert at unexpected path: %s", cacert_path
+            )
     else:
         logger.info(
             "[signalrgb] Not running or cacert.pem not found - skipping cacert patch."
