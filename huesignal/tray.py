@@ -21,13 +21,14 @@ from enum import Enum, auto
 from typing import Callable
 
 import pystray
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from .color import Color
-from .config import CONFIG_FILE, HUESIGNAL_HTML, LOGS_DIR, ICON_FILE
+from .config import CONFIG_FILE, HUESIGNAL_HTML, LOGS_DIR, ASSETS_DIR
 
 logger = logging.getLogger("huesignal")
 
+_ICON = ASSETS_DIR / "tray.ico"
 _ICON_SIZE = 64
 _DOT_RADIUS = 11
 _ICON_PAD = 7  # padding around HS square to leave room for dot
@@ -163,16 +164,51 @@ class TrayIcon:
     # ------------------------------------------------------------------
 
     def _load_base_image(self) -> Image.Image:
-        """Load assets/logo.png if present, otherwise generate a placeholder."""
-        if ICON_FILE.exists():
+        """Load assets/tray.ico as a _ICON_SIZE image.
+
+        For .ico files, the correctly-sized embedded frame is pulled directly
+        so no scaling occurs at all.  For other formats, LANCZOS + UnsharpMask
+        is used as a fallback.
+        """
+        if _ICON.exists():
             try:
-                img = Image.open(ICON_FILE).convert("RGBA")
-                if img.size != (_ICON_SIZE, _ICON_SIZE):
-                    img = img.resize((_ICON_SIZE, _ICON_SIZE), Image.LANCZOS)
+                img = Image.open(_ICON)
+                target = (_ICON_SIZE, _ICON_SIZE)
+
+                if _ICON.suffix.lower() == ".ico":
+                    available = img.ico.sizes
+                    # Prefer an exact match; otherwise pick the smallest size
+                    # that is still >= target so we never upscale.
+                    if target in available:
+                        frame = img.ico.getimage(target)
+                    else:
+                        best = min(
+                            (s for s in available if s[0] >= _ICON_SIZE),
+                            key=lambda s: s[0],
+                            default=max(available, key=lambda s: s[0]),
+                        )
+                        frame = img.ico.getimage(best)
+                        if frame.size != target:
+                            frame = frame.resize(target, Image.LANCZOS)
+                            frame = frame.filter(
+                                ImageFilter.UnsharpMask(
+                                    radius=1, percent=180, threshold=2
+                                )
+                            )
+                    return frame.convert("RGBA")
+
+                # Non-.ico fallback (e.g. PNG)
+                img = img.convert("RGBA")
+                if img.size != target:
+                    img = img.resize(target, Image.LANCZOS)
+                    img = img.filter(
+                        ImageFilter.UnsharpMask(radius=1, percent=180, threshold=2)
+                    )
                 return img
+
             except Exception as exc:
                 logger.warning(
-                    "[tray] Could not load %s: %s - using placeholder.", ICON_FILE, exc
+                    "[tray] Could not load %s: %s - using placeholder.", _ICON, exc
                 )
         else:
             logger.debug("[tray] No tray icon found - using generated placeholder.")
