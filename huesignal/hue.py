@@ -6,6 +6,7 @@ import json
 import logging
 import time
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import Callable, Optional
 
 import requests
@@ -59,9 +60,8 @@ def resolve_light_ids(cfg: AppConfig) -> list[str]:
             if svc.get("rtype") == "entertainment":
                 ent_rids.add(svc["rid"])
 
-    # Entertainment -> device IDs
-    device_rids: set[str] = set()
-    for ent_rid in ent_rids:
+    # Entertainment -> device IDs (parallel)
+    def _get_device_rid(ent_rid: str) -> str | None:
         owner = (
             requests.get(
                 f"{base}/clip/v2/resource/entertainment/{ent_rid}",
@@ -73,12 +73,17 @@ def resolve_light_ids(cfg: AppConfig) -> list[str]:
             .get("data", [{}])[0]
             .get("owner", {})
         )
-        if owner.get("rtype") == "device":
-            device_rids.add(owner["rid"])
+        return owner["rid"] if owner.get("rtype") == "device" else None
 
-    # Device -> light IDs
-    light_rids: list[str] = []
-    for device_rid in device_rids:
+    device_rids: set[str] = set()
+    if ent_rids:
+        with ThreadPoolExecutor(max_workers=min(len(ent_rids), 8)) as pool:
+            for rid in pool.map(_get_device_rid, ent_rids):
+                if rid is not None:
+                    device_rids.add(rid)
+
+    # Device -> light IDs (parallel)
+    def _get_light_rids(device_rid: str) -> list[str]:
         services = (
             requests.get(
                 f"{base}/clip/v2/resource/device/{device_rid}",
@@ -90,9 +95,13 @@ def resolve_light_ids(cfg: AppConfig) -> list[str]:
             .get("data", [{}])[0]
             .get("services", [])
         )
-        for svc in services:
-            if svc.get("rtype") == "light":
-                light_rids.append(svc["rid"])
+        return [svc["rid"] for svc in services if svc.get("rtype") == "light"]
+
+    light_rids: list[str] = []
+    if device_rids:
+        with ThreadPoolExecutor(max_workers=min(len(device_rids), 8)) as pool:
+            for rids in pool.map(_get_light_rids, device_rids):
+                light_rids.extend(rids)
 
     return light_rids
 
@@ -115,18 +124,24 @@ def fetch_light_colors(cfg: AppConfig, light_id: str) -> list[Color]:
 
 def fetch_initial_colors(cfg: AppConfig) -> list[Color]:
     """Fetch current colors for all lights in the zone at startup."""
-    colors: list[Color] = []
-    for light_id in cfg.resolved_light_ids:
+    if not cfg.resolved_light_ids:
+        return [BLACK]
+
+    def _fetch_one(light_id: str) -> list[Color]:
         data = (
             _get(cfg, f"https://{cfg.bridge_ip}/clip/v2/resource/light/{light_id}")
             .json()
             .get("data", [{}])[0]
         )
         if not data.get("on", {}).get("on", False):
-            colors.append(BLACK)
-            continue
+            return [BLACK]
         bri = data.get("dimming", {}).get("brightness", 100.0) / 100.0
-        colors.extend(_colors_from_light_data(data, bri))
+        return _colors_from_light_data(data, bri)
+
+    colors: list[Color] = []
+    with ThreadPoolExecutor(max_workers=min(len(cfg.resolved_light_ids), 8)) as pool:
+        for result in pool.map(_fetch_one, cfg.resolved_light_ids):
+            colors.extend(result)
 
     return colors or [BLACK]
 
