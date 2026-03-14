@@ -2,15 +2,20 @@
 
 Startup sequence
 ----------------
+0.  Single-instance guard (named mutex)
 1.  Load and validate config
-2.  Resolve zone ID (cached in config.ini after first run)
-3.  Resolve light IDs for the zone
-4.  Fetch initial light colors
-5.  Set up SignalRGB (write HTML, symlink, patch cacert)
-6.  Start Hue SSE stream thread
-7.  Start Windows power monitor thread
-8.  Start Flask/WSS server on a background thread
-9.  Run system tray icon on the main thread (blocks until Exit)
+2.  Locate mkcert CA certificate
+3.  Resolve zone ID (cached in config.ini after first run)
+4.  Resolve light IDs for the zone
+5.  Fetch initial light colors
+6.  Create ColorServer and seed initial colors
+7.  SignalRGB setup (background thread - non-blocking)
+8.  Create tray icon object (if enabled)
+9.  Start Hue SSE stream thread
+10. Start Windows power monitor thread
+11. Start bridge monitor thread
+12. Start Flask/WSS server thread
+13. Start tray icon thread (if enabled); main thread waits on shutdown event
 """
 
 from __future__ import annotations
@@ -42,6 +47,9 @@ class StartupError(Exception):
     """Raised (and displayed to the user) when a fatal startup step fails."""
 
 
+_ERROR_ALREADY_EXISTS = 183
+
+
 class HueSignalApp:
     def __init__(self) -> None:
         self._cfg: AppConfig | None = None
@@ -52,6 +60,7 @@ class HueSignalApp:
         self._stream_interrupt = threading.Event()
         self._shutdown_event = threading.Event()
         self._paused = False
+        self._instance_mutex = None  # held for process lifetime to enforce single instance
 
     # ------------------------------------------------------------------
     # Entry point
@@ -69,6 +78,16 @@ class HueSignalApp:
     # ------------------------------------------------------------------
 
     def _startup(self) -> None:
+        # 0. Single-instance guard
+        self._instance_mutex = ctypes.windll.kernel32.CreateMutexW(
+            None, True, "HueSignal_SingleInstance"
+        )
+        if ctypes.windll.kernel32.GetLastError() == _ERROR_ALREADY_EXISTS:
+            raise StartupError(
+                "HueSignal is already running.\n\n"
+                "Check the system tray or Task Manager for the existing instance."
+            )
+
         # 1. Config
         cfg = self._load_config()
         setup_logging(cfg)
@@ -93,11 +112,17 @@ class HueSignalApp:
         server.push_colors(initial_colors)
         self._server = server
 
-        # 7. SignalRGB
-        try:
-            setup_signalrgb(mkcert_ca)
-        except Exception as exc:
-            logger.warning("[signalrgb] Setup failed (non-fatal): %s", exc)
+        # 7. SignalRGB - runs in background so the optional post-restart sleep
+        # (up to 6 s) doesn't block the tray icon and server from starting.
+        def _do_signalrgb_setup() -> None:
+            try:
+                setup_signalrgb(mkcert_ca)
+            except Exception as exc:
+                logger.warning("[signalrgb] Setup failed (non-fatal): %s", exc)
+
+        threading.Thread(
+            target=_do_signalrgb_setup, name="signalrgb-setup", daemon=True
+        ).start()
 
         # 8. Tray icon (optional - controlled by [general] tray_icon in config.ini)
         if cfg.tray_icon:
