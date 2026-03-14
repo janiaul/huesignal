@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import socket
+import ssl
 import time
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -11,10 +14,13 @@ from typing import Callable, Optional
 
 import requests
 import urllib3
+from requests.adapters import HTTPAdapter
 
 from .color import Color, BLACK, xy_bri_to_rgb, rgb_preview
 from .config import AppConfig
 
+# verify=False is used alongside fingerprint pinning - CA chain check is intentionally
+# skipped because the bridge uses a Signify-internal CA; fingerprint provides security.
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 logger = logging.getLogger("huesignal")
@@ -22,6 +28,64 @@ logger = logging.getLogger("huesignal")
 # How long to wait between SSE reconnect attempts (doubles each failure, caps at 60s)
 _BACKOFF_INITIAL = 3
 _BACKOFF_MAX = 60
+
+
+# ---------------------------------------------------------------------------
+# Fingerprint-pinned session
+# ---------------------------------------------------------------------------
+
+
+class _FingerprintAdapter(HTTPAdapter):
+    """Requests transport adapter that pins every connection to a known cert fingerprint.
+
+    urllib3's assert_fingerprint verifies the SHA-256 digest of the server's
+    DER-encoded certificate after every TLS handshake, independently of CA
+    chain and hostname checks.
+    """
+
+    def __init__(self, fingerprint: str, **kwargs) -> None:
+        self._fingerprint = fingerprint
+        super().__init__(**kwargs)
+
+    def init_poolmanager(self, *args, **kwargs) -> None:
+        kwargs["assert_fingerprint"] = self._fingerprint
+        super().init_poolmanager(*args, **kwargs)
+
+    def proxy_manager_for(self, proxy, **proxy_kwargs):
+        proxy_kwargs["assert_fingerprint"] = self._fingerprint
+        return super().proxy_manager_for(proxy, **proxy_kwargs)
+
+
+_hue_session: Optional[requests.Session] = None
+
+
+def init_hue_session(fingerprint: str) -> None:
+    """Configure the module-level session with SHA-256 certificate fingerprint pinning."""
+    global _hue_session
+    session = requests.Session()
+    session.mount("https://", _FingerprintAdapter(fingerprint))
+    _hue_session = session
+
+
+def get_hue_session() -> requests.Session:
+    """Return the pinned session. Falls back to a plain session with a warning if not initialised."""
+    if _hue_session is None:
+        logger.warning("[hue] Session not initialised - using unverified fallback.")
+        return requests.Session()
+    return _hue_session
+
+
+def fetch_bridge_fingerprint(host: str, port: int = 443, timeout: int = 5) -> str:
+    """Open a raw TLS socket and return the SHA-256 fingerprint of the bridge certificate."""
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    with socket.create_connection((host, port), timeout=timeout) as sock:
+        with ctx.wrap_socket(sock) as ssock:
+            cert_der = ssock.getpeercert(binary_form=True)
+    if not cert_der:
+        raise ValueError("Bridge returned no certificate during TLS handshake.")
+    return hashlib.sha256(cert_der).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -63,7 +127,8 @@ def resolve_light_ids(cfg: AppConfig) -> list[str]:
     # Entertainment -> device IDs (parallel)
     def _get_device_rid(ent_rid: str) -> str | None:
         owner = (
-            requests.get(
+            get_hue_session()
+            .get(
                 f"{base}/clip/v2/resource/entertainment/{ent_rid}",
                 headers=headers,
                 verify=False,
@@ -85,7 +150,8 @@ def resolve_light_ids(cfg: AppConfig) -> list[str]:
     # Device -> light IDs (parallel)
     def _get_light_rids(device_rid: str) -> list[str]:
         services = (
-            requests.get(
+            get_hue_session()
+            .get(
                 f"{base}/clip/v2/resource/device/{device_rid}",
                 headers=headers,
                 verify=False,
@@ -258,7 +324,7 @@ class HueStreamThread(threading.Thread):
             try:
                 logger.info("[hue] Connecting to bridge at %s ...", cfg.bridge_ip)
                 self._on_status("connecting")
-                with requests.get(
+                with get_hue_session().get(
                     url,
                     headers=headers,
                     stream=True,
@@ -385,7 +451,7 @@ def _headers(cfg: AppConfig) -> dict[str, str]:
 
 
 def _get(cfg: AppConfig, url: str) -> requests.Response:
-    resp = requests.get(
+    resp = get_hue_session().get(
         url,
         headers={**_headers(cfg), "Connection": "close"},
         verify=False,

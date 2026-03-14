@@ -15,11 +15,12 @@ import threading
 from pathlib import Path
 from typing import Callable, Optional
 
-import requests
 import urllib3
 
 from .config import AppConfig, ASSETS_DIR
+from .hue import get_hue_session
 
+# verify=False used alongside fingerprint pinning - see hue.py for rationale.
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 logger = logging.getLogger("huesignal")
@@ -108,7 +109,7 @@ class BridgeMonitor(threading.Thread):
             "Accept": "application/json",
         }
         try:
-            resp = requests.get(
+            resp = get_hue_session().get(
                 url,
                 headers=headers,
                 verify=False,

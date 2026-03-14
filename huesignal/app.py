@@ -4,18 +4,19 @@ Startup sequence
 ----------------
 0.  Single-instance guard (named mutex)
 1.  Load and validate config
-2.  Locate mkcert CA certificate
-3.  Resolve zone ID (cached in config.ini after first run)
-4.  Resolve light IDs for the zone
-5.  Fetch initial light colors
-6.  Create ColorServer and seed initial colors
-7.  SignalRGB setup (background thread - non-blocking)
-8.  Create tray icon object (if enabled)
-9.  Start Hue SSE stream thread
-10. Start Windows power monitor thread
-11. Start bridge monitor thread
-12. Start Flask/WSS server thread
-13. Start tray icon thread (if enabled); main thread waits on shutdown event
+2.  Bridge certificate TOFU pinning -> initialise pinned HTTPS session
+3.  Locate mkcert CA certificate
+4.  Resolve zone ID (cached in config.ini after first run)
+5.  Resolve light IDs for the zone
+6.  Fetch initial light colors
+7.  Create ColorServer and seed initial colors
+8.  SignalRGB setup (background thread - non-blocking)
+9.  Create tray icon object (if enabled)
+10. Start Hue SSE stream thread
+11. Start Windows power monitor thread
+12. Start bridge monitor thread
+13. Start Flask/WSS server thread
+14. Start tray icon thread (if enabled); main thread waits on shutdown event
 """
 
 from __future__ import annotations
@@ -30,7 +31,9 @@ from .config import AppConfig, ConfigError, setup_logging
 from .color import Color, rgb_preview
 from .hue import (
     HueStreamThread,
+    fetch_bridge_fingerprint,
     fetch_initial_colors,
+    init_hue_session,
     resolve_light_ids,
     resolve_zone_id,
 )
@@ -60,7 +63,9 @@ class HueSignalApp:
         self._stream_interrupt = threading.Event()
         self._shutdown_event = threading.Event()
         self._paused = False
-        self._instance_mutex = None  # held for process lifetime to enforce single instance
+        self._instance_mutex = (
+            None  # held for process lifetime to enforce single instance
+        )
 
     # ------------------------------------------------------------------
     # Entry point
@@ -95,24 +100,27 @@ class HueSignalApp:
         logger.info("HueSignal starting up")
         logger.info("=" * 60)
 
-        # 2. mkcert CA
+        # 2. Bridge certificate TOFU pinning
+        self._verify_bridge_cert(cfg)
+
+        # 3. mkcert CA
         mkcert_ca = self._find_mkcert_ca()
 
-        # 3. Zone
+        # 4. Zone
         cfg = self._resolve_zone(cfg)
 
-        # 4. Lights
+        # 5. Lights
         cfg = self._resolve_lights(cfg)
 
-        # 5. Initial colors
+        # 6. Initial colors
         initial_colors = self._fetch_initial_colors(cfg)
 
-        # 6. Server
+        # 7. Server
         server = ColorServer(cfg)
         server.push_colors(initial_colors)
         self._server = server
 
-        # 7. SignalRGB - runs in background so the optional post-restart sleep
+        # 8. SignalRGB - runs in background so the optional post-restart sleep
         # (up to 6 s) doesn't block the tray icon and server from starting.
         def _do_signalrgb_setup() -> None:
             try:
@@ -124,7 +132,7 @@ class HueSignalApp:
             target=_do_signalrgb_setup, name="signalrgb-setup", daemon=True
         ).start()
 
-        # 8. Tray icon (optional - controlled by [general] tray_icon in config.ini)
+        # 9. Tray icon (optional - controlled by [general] tray_icon in config.ini)
         if cfg.tray_icon:
             tray = TrayIcon(
                 on_restart_stream=self._restart_stream,
@@ -134,7 +142,7 @@ class HueSignalApp:
             )
             self._tray = tray
 
-        # 9. Hue SSE stream thread
+        # 10. Hue SSE stream thread
         stream = HueStreamThread(
             cfg=cfg,
             on_colors=self._on_colors,
@@ -145,7 +153,7 @@ class HueSignalApp:
         stream.start()
         self._stream = stream
 
-        # 10. Power monitor thread
+        # 11. Power monitor thread
         wake_handler = make_wake_handler(
             cfg=cfg,
             stream_interrupt=self._stream_interrupt,
@@ -154,7 +162,7 @@ class HueSignalApp:
         )
         PowerMonitor(on_wake=wake_handler).start()
 
-        # 11. Bridge monitor - periodic ping for toast notifications and tray status
+        # 12. Bridge monitor - periodic ping for toast notifications and tray status
         monitor = BridgeMonitor(
             cfg=cfg,
             on_lost=self._on_bridge_lost,
@@ -163,7 +171,7 @@ class HueSignalApp:
         monitor.start()
         self._monitor = monitor
 
-        # 12. Flask on a background thread - frees main thread for pystray
+        # 13. Flask on a background thread - frees main thread for pystray
         flask_thread = threading.Thread(
             target=server.run,
             name="flask",
@@ -173,7 +181,7 @@ class HueSignalApp:
 
         logger.info("All subsystems started.")
 
-        # 13. Tray icon on a daemon thread (only if enabled in config)
+        # 14. Tray icon on a daemon thread (only if enabled in config)
         if cfg.tray_icon:
             tray_thread = threading.Thread(
                 target=self._tray.run, name="tray", daemon=True
@@ -184,7 +192,7 @@ class HueSignalApp:
                 "[app] Tray icon disabled - running headless. Use Ctrl+C to stop."
             )
 
-        # 13. Main thread blocks here - interruptible by Ctrl+C or by
+        # 15. Main thread blocks here - interruptible by Ctrl+C or by
         # _shutdown_event.set() from the tray Exit menu item.
         try:
             self._shutdown_event.wait()
@@ -269,6 +277,58 @@ class HueSignalApp:
     # ------------------------------------------------------------------
     # Startup helpers
     # ------------------------------------------------------------------
+
+    def _verify_bridge_cert(self, cfg: AppConfig) -> None:
+        """TOFU certificate pinning for the Hue bridge.
+
+        First run: fetch and store the fingerprint silently.
+        Subsequent runs: verify it matches; on mismatch prompt the user to
+        accept (firmware update) or reject (potential MITM).
+        """
+        try:
+            current_fp = fetch_bridge_fingerprint(cfg.bridge_ip)
+        except Exception as exc:
+            raise StartupError(
+                f"Could not connect to Hue bridge at {cfg.bridge_ip} "
+                f"to verify its TLS certificate.\n\n{exc}"
+            ) from exc
+
+        if not cfg.bridge_cert_fingerprint:
+            cfg.bridge_cert_fingerprint = current_fp
+            cfg.save_bridge_fingerprint()
+            logger.info(
+                "[hue] Certificate fingerprint stored (first run): %.16s...", current_fp
+            )
+        elif current_fp == cfg.bridge_cert_fingerprint:
+            logger.info("[hue] Certificate fingerprint OK.")
+        else:
+            logger.warning("[hue] Certificate fingerprint mismatch!")
+            logger.warning("[hue]   Stored:  %s", cfg.bridge_cert_fingerprint)
+            logger.warning("[hue]   Current: %s", current_fp)
+            result = ctypes.windll.user32.MessageBoxW(
+                0,
+                (
+                    "The Hue bridge TLS certificate has changed.\n\n"
+                    f"Expected:  {cfg.bridge_cert_fingerprint[:32]}...\n"
+                    f"Received:  {current_fp[:32]}...\n\n"
+                    "This may be due to a firmware update or a man-in-the-middle attack.\n\n"
+                    "Accept the new certificate and continue?"
+                ),
+                "HueSignal - Certificate Changed",
+                0x04 | 0x30 | 0x10000,  # MB_YESNO | MB_ICONWARNING | MB_SETFOREGROUND
+            )
+            if result == 6:  # IDYES
+                cfg.bridge_cert_fingerprint = current_fp
+                cfg.save_bridge_fingerprint()
+                logger.info("[hue] New certificate accepted and saved.")
+            else:
+                raise StartupError(
+                    "Startup blocked: Hue bridge certificate rejected.\n\n"
+                    "If this was a legitimate change (e.g. a firmware update), delete the\n"
+                    "bridge_cert_fingerprint line from config.ini to reset the pinned certificate."
+                )
+
+        init_hue_session(cfg.bridge_cert_fingerprint)
 
     def _load_config(self) -> AppConfig:
         try:

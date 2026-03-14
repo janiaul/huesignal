@@ -38,6 +38,7 @@ class AppConfig:
     application_key: str
     entertainment_zone_name: str
     entertainment_id: str = ""
+    bridge_cert_fingerprint: str = ""
     logging_enabled: bool = False
     log_level: str = "INFO"
     tray_icon: bool = True
@@ -77,6 +78,9 @@ class AppConfig:
             application_key=parser["hue"]["application_key"].strip(),
             entertainment_zone_name=parser["hue"]["entertainment_zone_name"].strip(),
             entertainment_id=parser["hue"].get("entertainment_id", "").strip(),
+            bridge_cert_fingerprint=parser["hue"]
+            .get("bridge_cert_fingerprint", "")
+            .strip(),
             logging_enabled=parser["general"].getboolean("logging", fallback=False),
             log_level=parser["general"].get("log_level", "INFO").strip().upper(),
             tray_icon=parser["general"].getboolean("tray_icon", fallback=True),
@@ -87,6 +91,13 @@ class AppConfig:
         parser = configparser.ConfigParser()
         parser.read(path, encoding="utf-8")
         parser["hue"]["entertainment_id"] = self.entertainment_id
+        write_config_atomic(parser, path)
+
+    def save_bridge_fingerprint(self, path: Path = CONFIG_FILE) -> None:
+        """Persist the trusted bridge TLS certificate fingerprint to config.ini."""
+        parser = configparser.ConfigParser()
+        parser.read(path, encoding="utf-8")
+        parser["hue"]["bridge_cert_fingerprint"] = self.bridge_cert_fingerprint
         write_config_atomic(parser, path)
 
 
