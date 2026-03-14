@@ -10,7 +10,6 @@ import time
 from pathlib import Path
 
 from .config import (
-    ASSETS_DIR,
     EFFECTS_DIR,
     HUESIGNAL_HTML,
     SIGNALRGB_EFFECTS_DIR,
