@@ -201,7 +201,8 @@ def setup_signalrgb(mkcert_ca_path: Path) -> None:
             patch_cacert(cacert_path, mkcert_ca_path)
         else:
             logger.warning(
-                "[signalrgb] Refusing to patch cacert at unexpected path: %s", cacert_path
+                "[signalrgb] Refusing to patch cacert at unexpected path: %s",
+                cacert_path,
             )
     else:
         logger.info(
