@@ -62,7 +62,6 @@ class HueSignalApp:
         self._monitor: BridgeMonitor | None = None
         self._stream_interrupt = threading.Event()
         self._shutdown_event = threading.Event()
-        self._paused = False
         self._instance_mutex = (
             None  # held for process lifetime to enforce single instance
         )
