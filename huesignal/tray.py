@@ -185,26 +185,32 @@ class TrayIcon:
                 target = (_ICON_SIZE, _ICON_SIZE)
 
                 if _ICON.suffix.lower() == ".ico":
-                    available = img.ico.sizes
-                    # Prefer an exact match; otherwise pick the smallest size
-                    # that is still >= target so we never upscale.
-                    if target in available:
-                        frame = img.ico.getimage(target)
-                    else:
-                        best = min(
-                            (s for s in available if s[0] >= _ICON_SIZE),
-                            key=lambda s: s[0],
-                            default=max(available, key=lambda s: s[0]),
+                    # Use n_frames/seek() - avoids img.ico.sizes whose API
+                    # changed across Pillow versions (property vs method).
+                    # Goal: exact 64x64 frame > smallest frame >= 64 > largest.
+                    n_frames = getattr(img, "n_frames", 1)
+                    chosen = img.copy()
+                    for i in range(n_frames):
+                        try:
+                            img.seek(i)
+                        except EOFError:
+                            break
+                        w, h = img.size
+                        cw, _ = chosen.size
+                        if (w, h) == target:
+                            chosen = img.copy()
+                            break
+                        if w >= _ICON_SIZE and (cw < _ICON_SIZE or w < cw):
+                            chosen = img.copy()
+                        elif cw < _ICON_SIZE and w > cw:
+                            chosen = img.copy()
+                    frame = chosen.convert("RGBA")
+                    if frame.size != target:
+                        frame = frame.resize(target, Image.LANCZOS)
+                        frame = frame.filter(
+                            ImageFilter.UnsharpMask(radius=1, percent=180, threshold=2)
                         )
-                        frame = img.ico.getimage(best)
-                        if frame.size != target:
-                            frame = frame.resize(target, Image.LANCZOS)
-                            frame = frame.filter(
-                                ImageFilter.UnsharpMask(
-                                    radius=1, percent=180, threshold=2
-                                )
-                            )
-                    return frame.convert("RGBA")
+                    return frame
 
                 # Non-.ico fallback (e.g. PNG)
                 img = img.convert("RGBA")
