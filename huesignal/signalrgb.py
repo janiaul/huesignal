@@ -9,6 +9,8 @@ import subprocess
 import time
 from pathlib import Path
 
+import psutil
+
 from .config import (
     EFFECTS_DIR,
     HUESIGNAL_HTML,
@@ -120,28 +122,13 @@ def ensure_effects_symlink() -> None:
 def find_cacert() -> Path | None:
     """Locate SignalRGB's cacert.pem by inspecting the running process path."""
     try:
-        result = subprocess.run(
-            [
-                "wmic",
-                "process",
-                "where",
-                f"name='{_SIGNAL_MAIN_PROCESS}'",
-                "get",
-                "ExecutablePath",
-            ],
-            capture_output=True,
-            text=True,
-            creationflags=subprocess.CREATE_NO_WINDOW,
-            timeout=10,
-        )
-    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
-        logger.warning("[signalrgb] wmic query failed: %s", exc)
-        return None
-
-    for line in result.stdout.splitlines():
-        line = line.strip()
-        if line.lower().endswith("signalrgb.exe"):
-            return Path(line).parent / "cacert.pem"
+        for proc in psutil.process_iter(["name", "exe"]):
+            if (proc.info["name"] or "").lower() == _SIGNAL_MAIN_PROCESS.lower():
+                exe = proc.info["exe"]
+                if exe:
+                    return Path(exe).parent / "cacert.pem"
+    except Exception as exc:
+        logger.warning("[signalrgb] Could not locate SignalRGB process: %s", exc)
     return None
 
 
