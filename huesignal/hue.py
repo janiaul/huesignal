@@ -242,9 +242,13 @@ def fetch_initial_colors(cfg: AppConfig) -> list[Color]:
 def extract_colors_from_event(
     data: list,
     watched_ids: set[str],
-    cfg: AppConfig,
+    brightness_cache: dict[str, float],
 ) -> tuple[list[Color], list[str]]:
     """Parse SSE event payload into colors and a list of light IDs needing a fetch.
+
+    brightness_cache is updated in place whenever a dimming value is present in an
+    event, and used as fallback when dimming is absent (SSE delta events omit fields
+    that did not change, so a color-only event carries no brightness data).
 
     Returns (colors, needs_fetch) where:
     - colors: inline color data extracted directly from the event
@@ -270,7 +274,13 @@ def extract_colors_from_event(
                 colors.append(BLACK())
                 continue
 
-            bri = item.get("dimming", {}).get("brightness", 100.0) / 100.0
+            # Keep the cache current; fall back to cached value when dimming is absent.
+            if "dimming" in item:
+                brightness_cache[light_id] = (
+                    item["dimming"].get("brightness", 100.0) / 100.0
+                )
+            bri = brightness_cache.get(light_id, 1.0)
+
             event_colors = _colors_from_light_data(item, bri)
 
             if event_colors:
@@ -324,6 +334,7 @@ class HueStreamThread(threading.Thread):
         self._on_reseed = on_reseed or (lambda: None)
         self._last_pushed: list[Color] = []
         self._last_color_event: list[Color] = []
+        self._brightness: dict[str, float] = {}
         self._resp: Optional[requests.Response] = None
         self._resp_lock = threading.Lock()
         self._watched_ids: frozenset[str] = frozenset(cfg.resolved_light_ids)
@@ -360,9 +371,11 @@ class HueStreamThread(threading.Thread):
                         backoff = _BACKOFF_INITIAL
                         self._last_pushed = []
                         self._last_color_event = []
+                        self._brightness = {}
                         self._on_status("connected")
                         logger.info("[hue] Connected. Listening for events ...")
                         self._on_reseed()
+                        self._seed_brightness_cache()
 
                         buffer: list[str] = []
                         for raw_line in resp.iter_lines(decode_unicode=True):
@@ -435,14 +448,16 @@ class HueStreamThread(threading.Thread):
         watched = self._watched_ids
         try:
             events = json.loads(payload)
-            colors, needs_fetch = extract_colors_from_event(events, watched, cfg)
+            colors, needs_fetch = extract_colors_from_event(
+                events, watched, self._brightness
+            )
             if colors:
                 if self._colors_match(colors, self._last_color_event, tol=1):
                     logger.debug("[hue] Color event skipped - duplicate scene recall.")
                 else:
                     self._last_color_event = colors
                     self._push(colors)
-            if needs_fetch and not colors:
+            if needs_fetch:
                 self._fetch_light_state(needs_fetch, cfg)
         except json.JSONDecodeError as exc:
             logger.warning("[hue] Malformed SSE payload, skipping: %s", exc)
@@ -461,6 +476,30 @@ class HueStreamThread(threading.Thread):
                 )
         if colors:
             self._push(colors, "brightness fetch")
+
+    def _seed_brightness_cache(self) -> None:
+        """Populate per-light brightness cache from REST state after (re)connect.
+
+        SSE events are delta updates and may omit dimming when only color changed.
+        Seeding here ensures the cache is accurate before the first such event arrives.
+        """
+        cfg = self._cfg
+        for light_id in self._watched_ids:
+            try:
+                data = (
+                    _get(
+                        cfg,
+                        f"https://{cfg.bridge_ip}/clip/v2/resource/light/{light_id}",
+                    )
+                    .json()
+                    .get("data", [{}])[0]
+                )
+                bri = data.get("dimming", {}).get("brightness", 100.0) / 100.0
+                self._brightness[light_id] = bri
+            except Exception as exc:
+                logger.debug(
+                    "[hue] Could not seed brightness for light %s: %s", light_id, exc
+                )
 
 
 # ---------------------------------------------------------------------------
