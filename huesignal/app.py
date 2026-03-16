@@ -231,6 +231,8 @@ class HueSignalApp:
 
     def _on_bridge_restored(self) -> None:
         """Called by BridgeMonitor when bridge becomes reachable again."""
+        if self._tray is not None:
+            self._tray.set_status(StreamStatus.CONNECTED)
         if self._stream is not None:
             self._stream.interrupt()
         threading.Thread(target=self._reseed_colors, daemon=True).start()
