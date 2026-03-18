@@ -62,8 +62,7 @@ class ColorServer:
         except (FileNotFoundError, ssl.SSLError) as exc:
             raise RuntimeError(
                 f"Failed to load SSL certificate: {exc}\n"
-                f"Expected files:\n  {CERT_FILE}\n  {KEY_FILE}\n"
-                "Run: mkcert 127.0.0.1 localhost"
+                f"Expected files:\n  {CERT_FILE}\n  {KEY_FILE}"
             ) from exc
 
         logger.info("[server] Listening on wss://127.0.0.1:%d/ws", FLASK_PORT)
