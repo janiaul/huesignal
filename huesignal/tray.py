@@ -367,7 +367,7 @@ class TrayIcon:
             def _show() -> None:
                 ctypes.windll.user32.MessageBoxW(
                     0,
-                    "File logging is currently disabled.\n\nEnable it via Settings -> Logging: off.",
+                    "File logging is currently disabled.\n\nEnable it in the tray menu: Settings -> Logging.",
                     "HueSignal",
                     0x40 | 0x10000,  # MB_ICONINFORMATION | MB_SETFOREGROUND
                 )
