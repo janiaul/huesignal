@@ -23,7 +23,6 @@ HueSignal listens to your Hue bridge's event stream, converts light colors from 
 - Python 3.10+
 - Philips Hue Bridge v2 with an entertainment zone configured
 - [SignalRGB](https://signalrgb.com/) installed and running
-- [mkcert](https://github.com/FiloSottile/mkcert) for generating a trusted local SSL certificate
 
 ## Setup
 
@@ -33,17 +32,7 @@ HueSignal listens to your Hue bridge's event stream, converts light colors from 
 pip install -r requirements.txt
 ```
 
-### 2. Generate a local SSL certificate
-
-SignalRGB requires HTTPS:
-
-```bash
-mkcert 127.0.0.1 localhost
-```
-
-Place the generated `localhost+1.pem` and `localhost+1-key.pem` in the `certs/` folder.
-
-### 3. Configure
+### 2. Configure
 
 Copy [`config.example.ini`](config.example.ini) to `config.ini` — every option is documented inline. The minimum required fields are:
 
@@ -55,16 +44,16 @@ Copy [`config.example.ini`](config.example.ini) to `config.ini` — every option
 
 `entertainment_id` and `bridge_cert_fingerprint` are resolved and cached automatically on first run.
 
-### 4. Run
+### 3. Run
 
 ```bash
 pythonw -m huesignal   # no console window (normal use)
 python  -m huesignal   # with console (troubleshooting)
 ```
 
-On first run HueSignal will resolve zone and light IDs, patch SignalRGB's certificate store, and write the `HueSignal.html` effect file into SignalRGB's effects folder.
+On first run HueSignal will generate a self-signed SSL certificate, resolve zone and light IDs, patch SignalRGB's certificate store, and write the `HueSignal.html` effect file into SignalRGB's effects folder.
 
-### 5. Load the effect in SignalRGB
+### 4. Load the effect in SignalRGB
 
 Open SignalRGB → **Library** → select **Hue Signal**.
 
