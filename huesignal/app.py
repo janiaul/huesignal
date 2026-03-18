@@ -4,8 +4,8 @@ Startup sequence
 ----------------
 0.  Single-instance guard (named mutex)
 1.  Load and validate config
-2.  Bridge certificate TOFU pinning -> initialise pinned HTTPS session
-3.  Locate mkcert CA certificate
+2.  Ensure local TLS certificates (generate/renew; install CA in Windows trust store)
+3.  Bridge certificate TOFU pinning -> initialise pinned HTTPS session
 4.  Resolve zone ID (cached in config.ini after first run)
 5.  Resolve light IDs for the zone
 6.  Fetch initial light colors
@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import ctypes
 import logging
-import subprocess
 import threading
 from pathlib import Path
 
@@ -40,6 +39,7 @@ from .hue import (
 from .watchdog import BridgeMonitor
 from .power import PowerMonitor, make_wake_handler
 from .server import ColorServer
+from .certs import CertError, ensure_local_certs
 from .signalrgb import setup_signalrgb
 from .tray import TrayIcon, STATUS_MAP, StreamStatus
 
@@ -99,11 +99,11 @@ class HueSignalApp:
         logger.info("HueSignal starting up")
         logger.info("=" * 60)
 
-        # 2. Bridge certificate TOFU pinning
-        self._verify_bridge_cert(cfg)
+        # 2. Local TLS certificates
+        ca_path = self._ensure_local_certs()
 
-        # 3. mkcert CA
-        mkcert_ca = self._find_mkcert_ca()
+        # 3. Bridge certificate TOFU pinning
+        self._verify_bridge_cert(cfg)
 
         # 4. Zone
         cfg = self._resolve_zone(cfg)
@@ -123,7 +123,7 @@ class HueSignalApp:
         # (up to 6 s) doesn't block the tray icon and server from starting.
         def _do_signalrgb_setup() -> None:
             try:
-                setup_signalrgb(mkcert_ca)
+                setup_signalrgb(ca_path)
             except Exception as exc:
                 logger.warning("[signalrgb] Setup failed (non-fatal): %s", exc)
 
@@ -279,6 +279,12 @@ class HueSignalApp:
     # Startup helpers
     # ------------------------------------------------------------------
 
+    def _ensure_local_certs(self) -> Path:
+        try:
+            return ensure_local_certs()
+        except CertError as exc:
+            raise StartupError(str(exc)) from exc
+
     def _verify_bridge_cert(self, cfg: AppConfig) -> None:
         """TOFU certificate pinning for the Hue bridge.
 
@@ -338,29 +344,6 @@ class HueSignalApp:
             return cfg
         except ConfigError as exc:
             raise StartupError(str(exc)) from exc
-
-    def _find_mkcert_ca(self) -> Path:
-        try:
-            caroot = Path(
-                subprocess.check_output(
-                    ["mkcert", "-CAROOT"],
-                    text=True,
-                    creationflags=subprocess.CREATE_NO_WINDOW,
-                ).strip()
-            )
-            ca_cert = caroot / "rootCA.pem"
-            if not ca_cert.exists():
-                raise FileNotFoundError(f"rootCA.pem not found in {caroot}")
-            return ca_cert
-        except FileNotFoundError as exc:
-            raise StartupError(
-                "mkcert is not installed or not on PATH.\n\n"
-                "Install it from https://github.com/FiloSottile/mkcert and run:\n"
-                "  mkcert -install\n"
-                "  mkcert 127.0.0.1 localhost"
-            ) from exc
-        except subprocess.CalledProcessError as exc:
-            raise StartupError(f"mkcert -CAROOT failed: {exc}") from exc
 
     def _resolve_zone(self, cfg: AppConfig) -> AppConfig:
         if cfg.entertainment_id:

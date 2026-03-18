@@ -132,13 +132,13 @@ def find_cacert() -> Path | None:
     return None
 
 
-def patch_cacert(cacert_path: Path, mkcert_ca_path: Path) -> None:
-    """Append mkcert's CA cert to SignalRGB's cacert.pem if not already present.
+def patch_cacert(cacert_path: Path, ca_path: Path) -> None:
+    """Append HueSignal's CA cert to SignalRGB's cacert.pem if not already present.
 
     If patched, prompts the user to restart SignalRGB.
     """
     try:
-        ca_text = mkcert_ca_path.read_text(encoding="utf-8")
+        ca_text = ca_path.read_text(encoding="utf-8")
         existing = cacert_path.read_text(encoding="utf-8")
     except OSError as exc:
         logger.error("[signalrgb] Cannot read cert files: %s", exc)
@@ -146,7 +146,7 @@ def patch_cacert(cacert_path: Path, mkcert_ca_path: Path) -> None:
 
     if ca_text.strip() in existing:
         logger.info(
-            "[signalrgb] mkcert CA already present in cacert.pem - no changes needed."
+            "[signalrgb] HueSignal CA already present in cacert.pem - no changes needed."
         )
         return
 
@@ -158,7 +158,7 @@ def patch_cacert(cacert_path: Path, mkcert_ca_path: Path) -> None:
 
     try:
         cacert_path.write_text(existing + "\n" + ca_text, encoding="utf-8")
-        logger.info("[signalrgb] mkcert CA appended to %s", cacert_path)
+        logger.info("[signalrgb] HueSignal CA appended to %s", cacert_path)
     except OSError as exc:
         logger.error("[signalrgb] Failed to write cacert.pem: %s", exc)
         return
@@ -190,7 +190,7 @@ def _is_safe_cacert_path(path: Path) -> bool:
         return False
 
 
-def setup_signalrgb(mkcert_ca_path: Path) -> None:
+def setup_signalrgb(ca_path: Path) -> None:
     """Top-level entry point: write HTML, create symlink, patch cacert if needed."""
     write_effect_html()
     ensure_effects_symlink()
@@ -198,7 +198,7 @@ def setup_signalrgb(mkcert_ca_path: Path) -> None:
     cacert_path = find_cacert()
     if cacert_path and cacert_path.exists():
         if _is_safe_cacert_path(cacert_path):
-            patch_cacert(cacert_path, mkcert_ca_path)
+            patch_cacert(cacert_path, ca_path)
         else:
             logger.warning(
                 "[signalrgb] Refusing to patch cacert at unexpected path: %s",

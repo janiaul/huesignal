@@ -17,6 +17,8 @@ EFFECTS_DIR = BASE_DIR / "effects"
 ASSETS_DIR = BASE_DIR / "assets"
 
 HUESIGNAL_HTML = EFFECTS_DIR / "HueSignal.html"
+CA_FILE = CERTS_DIR / "huesignal-ca.pem"
+CA_KEY_FILE = CERTS_DIR / "huesignal-ca-key.pem"
 CERT_FILE = CERTS_DIR / "huesignal.pem"
 KEY_FILE = CERTS_DIR / "huesignal-key.pem"
 CONFIG_FILE = BASE_DIR / "config.ini"
