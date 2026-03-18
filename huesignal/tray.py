@@ -2,10 +2,11 @@
 
 Status states
 -------------
-STARTING     Grey dot  - app is initialising
-CONNECTING   Amber dot - attempting to reach the bridge
-CONNECTED    Green dot - SSE stream is live
-RECONNECTING Red dot   - stream lost, retrying
+STARTING     Grey dot        - app is initialising
+CONNECTING   Amber dot       - attempting to reach the bridge
+CONNECTED    Green dot       - SSE stream is live
+RECONNECTING Red dot         - stream lost, retrying
+PAUSED       Light blue dot  - color sync intentionally paused
 
 The base icon is generated programmatically so no external .ico is required.
 Drop a real icon into assets/ and it will be used automatically.
@@ -26,6 +27,7 @@ from PIL import Image, ImageDraw, ImageFilter
 
 from .color import Color
 from .config import (
+    AppConfig,
     CONFIG_FILE,
     LOGS_DIR,
     ASSETS_DIR,
@@ -53,6 +55,7 @@ class StreamStatus(Enum):
     CONNECTING = auto()
     CONNECTED = auto()
     RECONNECTING = auto()
+    PAUSED = auto()
 
 
 # Map the string tokens emitted by HueStreamThread to enum values
@@ -68,13 +71,15 @@ _STATUS_COLORS: dict[StreamStatus, tuple[int, int, int]] = {
     StreamStatus.CONNECTING: (230, 160, 0),  # amber
     StreamStatus.CONNECTED: (60, 200, 80),  # green
     StreamStatus.RECONNECTING: (220, 50, 50),  # red
+    StreamStatus.PAUSED: (80, 180, 220),  # light blue
 }
 
 _STATUS_LABELS: dict[StreamStatus, str] = {
-    StreamStatus.STARTING: "Starting…",
-    StreamStatus.CONNECTING: "Connecting…",
+    StreamStatus.STARTING: "Starting...",
+    StreamStatus.CONNECTING: "Connecting...",
     StreamStatus.CONNECTED: "Connected",
-    StreamStatus.RECONNECTING: "Reconnecting…",
+    StreamStatus.RECONNECTING: "Reconnecting...",
+    StreamStatus.PAUSED: "Paused",
 }
 
 
@@ -90,14 +95,19 @@ class TrayIcon:
         on_restart_stream: Callable[[], None],
         on_exit: Callable[[], None],
         get_latest_colors: Callable[[], list[Color]],
+        cfg: AppConfig,
         on_resume: Callable[[], None] | None = None,
     ) -> None:
         self._on_restart_stream = on_restart_stream
         self._on_exit = on_exit
         self._get_latest_colors = get_latest_colors
+        self._cfg = cfg
         self._on_resume = on_resume or (lambda: None)
 
-        self._status = StreamStatus.STARTING
+        self._status = StreamStatus.STARTING  # Displayed status (may be PAUSED)
+        self._stream_status = (
+            StreamStatus.STARTING
+        )  # Actual stream state (never PAUSED)
         self._lock = threading.Lock()
         self._ready = False
         self._paused = False
@@ -151,8 +161,17 @@ class TrayIcon:
         self._icon.title = self._make_tooltip(status)
 
     def set_status(self, status: StreamStatus) -> None:
-        """Update the status dot and tooltip. Safe to call from any thread."""
+        """Update the stream status. Safe to call from any thread.
+
+        While paused, the real status is stored but the display is not updated
+        so the PAUSED dot remains visible until the user resumes.
+        """
         with self._lock:
+            if self._stream_status == status:
+                return
+            self._stream_status = status
+            if self._paused:
+                return  # keep showing PAUSED; _stream_status is saved for resume
             if self._status == status:
                 return
             self._status = status
@@ -181,9 +200,11 @@ class TrayIcon:
         with self._lock:
             self._paused = not self._paused
             paused = self._paused
+            self._status = StreamStatus.PAUSED if paused else self._stream_status
         logger.info("[tray] Sync %s.", "paused" if paused else "resumed")
         if not paused:
             threading.Thread(target=self._on_resume, daemon=True).start()
+        self._apply_status(self._status)
 
     # ------------------------------------------------------------------
     # Icon rendering
@@ -290,9 +311,10 @@ class TrayIcon:
                 lambda _: "Resume sync" if self._paused else "Pause sync",
                 self._handle_toggle_pause,
             ),
-            pystray.MenuItem("Restart stream", self._handle_restart),
+            pystray.MenuItem("Reconnect to bridge", self._handle_restart),
             pystray.MenuItem("Open log", self._handle_open_log),
             pystray.Menu.SEPARATOR,
+            pystray.MenuItem("About", self._handle_about),
             pystray.MenuItem("Exit", self._handle_exit),
         )
 
@@ -321,7 +343,7 @@ class TrayIcon:
                 self._handle_toggle_logging,
             )
             yield pystray.MenuItem(
-                f"Tray icon: {'on' if self._cached_tray_icon else 'off'}  (restart required)",
+                f"Tray icon: {'on' if self._cached_tray_icon else 'off'}",
                 self._handle_toggle_tray,
             )
 
@@ -337,6 +359,20 @@ class TrayIcon:
         self._toggle_config_bool("logging")
 
     def _handle_toggle_tray(self, icon: pystray.Icon, item: pystray.MenuItem) -> None:
+        threading.Thread(target=self._confirm_disable_tray, daemon=True).start()
+
+    def _confirm_disable_tray(self) -> None:
+        if self._cached_tray_icon:
+            result = ctypes.windll.user32.MessageBoxW(
+                0,
+                "Disabling the tray icon requires a restart to take effect.\n\n"
+                "After restarting, HueSignal can only be stopped via Task Manager.\n\n"
+                "Continue?",
+                "HueSignal - Disable Tray Icon",
+                0x04 | 0x30 | 0x10000,  # MB_YESNO | MB_ICONWARNING | MB_SETFOREGROUND
+            )
+            if result != 6:  # IDYES
+                return
         self._toggle_config_bool("tray_icon")
 
     def _toggle_config_bool(self, key: str) -> None:
@@ -358,8 +394,22 @@ class TrayIcon:
         self.toggle_pause()
 
     def _handle_restart(self, icon: pystray.Icon, item: pystray.MenuItem) -> None:
-        logger.info("[tray] Restart stream requested.")
+        logger.info("[tray] Reconnect to bridge requested.")
         threading.Thread(target=self._on_restart_stream, daemon=True).start()
+
+    def _handle_about(self, icon: pystray.Icon, item: pystray.MenuItem) -> None:
+        threading.Thread(target=self._show_about, daemon=True).start()
+
+    def _show_about(self) -> None:
+        light_count = len(self._cfg.resolved_light_ids)
+        ctypes.windll.user32.MessageBoxW(
+            0,
+            f"Bridge:   {self._cfg.bridge_ip}\n"
+            f"Zone:     {self._cfg.entertainment_zone_name}\n"
+            f"Lights:   {light_count}",
+            "HueSignal",
+            0x40 | 0x10000,  # MB_ICONINFORMATION | MB_SETFOREGROUND
+        )
 
     def _handle_open_log(self, icon: pystray.Icon, item: pystray.MenuItem) -> None:
         if not self._cached_logging:
@@ -381,7 +431,17 @@ class TrayIcon:
             except OSError as exc:
                 logger.warning("[tray] Could not open log: %s", exc)
         else:
-            logger.debug("[tray] No log file at %s", log_file)
+
+            def _show_no_file() -> None:
+                ctypes.windll.user32.MessageBoxW(
+                    0,
+                    "Log file not found.\n\n"
+                    "If you just enabled logging, restart HueSignal for file logging to take effect.",
+                    "HueSignal",
+                    0x40 | 0x10000,  # MB_ICONINFORMATION | MB_SETFOREGROUND
+                )
+
+            threading.Thread(target=_show_no_file, daemon=True).start()
 
     def _handle_exit(self, icon: pystray.Icon, item: pystray.MenuItem) -> None:
         logger.info("[tray] Exit requested.")
