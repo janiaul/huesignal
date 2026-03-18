@@ -154,13 +154,16 @@ def patch_cacert(cacert_path: Path, ca_path: Path) -> None:
     bak = cacert_path.with_suffix(".pem.bak")
     if not bak.exists():
         bak.write_bytes(cacert_path.read_bytes())
-        logger.info("[signalrgb] Backup created -> %s", bak)
+        logger.info("[signalrgb] Backup created: %s", bak)
 
+    tmp = cacert_path.with_suffix(".pem.tmp")
     try:
-        cacert_path.write_text(existing + "\n" + ca_text, encoding="utf-8")
+        tmp.write_text(existing + "\n" + ca_text, encoding="utf-8")
+        tmp.replace(cacert_path)
         logger.info("[signalrgb] HueSignal CA appended to %s", cacert_path)
     except OSError as exc:
         logger.error("[signalrgb] Failed to write cacert.pem: %s", exc)
+        tmp.unlink(missing_ok=True)
         return
 
     if _prompt_restart():
