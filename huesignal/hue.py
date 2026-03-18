@@ -68,10 +68,16 @@ def init_hue_session(fingerprint: str) -> None:
 
 
 def get_hue_session() -> requests.Session:
-    """Return the pinned session. Falls back to a plain session with a warning if not initialised."""
+    """Return the fingerprint-pinned session.
+
+    Raises RuntimeError if called before init_hue_session() - this indicates
+    a startup ordering bug and must not silently degrade to an unverified session.
+    """
     if _hue_session is None:
-        logger.warning("[hue] Session not initialised - using unverified fallback.")
-        return requests.Session()
+        raise RuntimeError(
+            "Hue session used before initialisation. "
+            "init_hue_session() must be called during startup."
+        )
     return _hue_session
 
 
