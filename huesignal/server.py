@@ -82,8 +82,8 @@ class ColorServer:
                 ws.send(json.dumps(self._latest_colors, separators=(",", ":")))
             while True:
                 ws.receive(timeout=None)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("[ws] Client session error: %s", exc)
         finally:
             with self._clients_lock:
                 self._clients.discard(ws)
