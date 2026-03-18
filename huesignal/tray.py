@@ -27,7 +27,6 @@ from PIL import Image, ImageDraw, ImageFilter
 from .color import Color
 from .config import (
     CONFIG_FILE,
-    HUESIGNAL_HTML,
     LOGS_DIR,
     ASSETS_DIR,
     write_config_atomic,
@@ -302,8 +301,6 @@ class TrayIcon:
         """Dynamic submenu showing the current color gradient as rgb() values."""
 
         def _items():
-            yield pystray.MenuItem("Open in browser", self._handle_open_browser)
-            yield pystray.Menu.SEPARATOR
             colors = self._get_latest_colors()
             if not colors:
                 yield pystray.MenuItem("No color data", None, enabled=False)
@@ -356,12 +353,6 @@ class TrayIcon:
         elif key == "tray_icon":
             self._cached_tray_icon = new_val
         logger.info("[tray] Settings: %s -> %s", key, new_val)
-
-    def _handle_open_browser(self, icon: pystray.Icon, item: pystray.MenuItem) -> None:
-        try:
-            os.startfile(str(HUESIGNAL_HTML))
-        except OSError as exc:
-            logger.warning("[tray] Could not open browser: %s", exc)
 
     def _handle_toggle_pause(self, icon: pystray.Icon, item: pystray.MenuItem) -> None:
         self.toggle_pause()
