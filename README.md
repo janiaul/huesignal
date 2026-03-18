@@ -64,8 +64,9 @@ The tray icon shows connection status via a colored dot:
 | Dot | Status |
 |---|---|
 | Grey | Starting |
-| Amber | Connecting to bridge |
+| Orange | Connecting to bridge |
 | Green | Connected — stream live |
+| Blue | Paused |
 | Red | Reconnecting |
 
 Right-click for: color preview (live RGB per light), pause/resume sync, settings (logging and tray icon toggles), restart stream, open log, and exit.
