@@ -15,8 +15,9 @@ Startup sequence
 10. Start Hue SSE stream thread
 11. Start Windows power monitor thread
 12. Start bridge monitor thread
-13. Start Flask/WSS server thread
-14. Start tray icon thread (if enabled); main thread waits on shutdown event
+13. Start SignalRGB monitor thread
+14. Start Flask/WSS server thread
+15. Start tray icon thread (if enabled); main thread waits on shutdown event
 """
 
 from __future__ import annotations
@@ -40,7 +41,7 @@ from .watchdog import BridgeMonitor
 from .power import PowerMonitor, make_wake_handler
 from .server import ColorServer
 from .certs import CertError, ensure_local_certs
-from .signalrgb import setup_signalrgb
+from .signalrgb import setup_signalrgb, SignalRGBMonitor
 from .tray import TrayIcon, STATUS_MAP, StreamStatus
 
 logger = logging.getLogger("huesignal")
@@ -60,6 +61,7 @@ class HueSignalApp:
         self._tray: TrayIcon | None = None
         self._stream: HueStreamThread | None = None
         self._monitor: BridgeMonitor | None = None
+        self._signalrgb_monitor: SignalRGBMonitor | None = None
         self._stream_interrupt = threading.Event()
         self._shutdown_event = threading.Event()
         self._instance_mutex = (
@@ -119,7 +121,7 @@ class HueSignalApp:
         server.push_colors(initial_colors)
         self._server = server
 
-        # 8. SignalRGB - runs in background so the optional post-restart sleep
+        # 8. SignalRGB - runs in background so the auto-restart sleep
         # (up to 6 s) doesn't block the tray icon and server from starting.
         def _do_signalrgb_setup() -> None:
             try:
@@ -171,7 +173,13 @@ class HueSignalApp:
         monitor.start()
         self._monitor = monitor
 
-        # 13. Flask on a background thread - frees main thread for pystray
+        # 13. SignalRGB monitor - periodic check that our CA is still in cacert.pem
+        # (covers SignalRGB updates that overwrite cacert.pem while HueSignal is running)
+        signalrgb_monitor = SignalRGBMonitor(ca_path)
+        signalrgb_monitor.start()
+        self._signalrgb_monitor = signalrgb_monitor
+
+        # 14. Flask on a background thread - frees main thread for pystray
         flask_thread = threading.Thread(
             target=server.run,
             name="flask",
@@ -181,7 +189,7 @@ class HueSignalApp:
 
         logger.info("All subsystems started.")
 
-        # 14. Tray icon on a daemon thread (only if enabled in config)
+        # 15. Tray icon on a daemon thread (only if enabled in config)
         if cfg.tray_icon:
             tray_thread = threading.Thread(
                 target=self._tray.run, name="tray", daemon=True
